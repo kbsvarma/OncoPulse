@@ -1,0 +1,35 @@
+specialty: GU
+subcategories:
+  - name: Prostate Metastatic
+    pubmed_query: '(metastatic prostate cancer OR mCRPC OR mHSPC) AND (abiraterone OR enzalutamide OR apalutamide OR darolutamide OR lutetium) AND (phase 3 OR randomized)'
+    trials_query: 'metastatic prostate cancer phase 3'
+    include_terms: ["overall survival", "radiographic progression-free survival", "PSA"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Prostate Localized
+    pubmed_query: '(localized prostate cancer) AND (radiotherapy OR surgery OR active surveillance) AND (randomized OR trial)'
+    trials_query: 'localized prostate cancer randomized trial'
+    include_terms: ["biochemical recurrence", "metastasis-free survival"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Bladder and Urothelial
+    pubmed_query: '(urothelial carcinoma OR bladder cancer) AND (enfortumab OR pembrolizumab OR nivolumab OR FGFR inhibitor) AND (phase OR randomized)'
+    trials_query: 'urothelial carcinoma phase 3 trial'
+    include_terms: ["overall survival", "complete response", "maintenance"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Renal Cell
+    pubmed_query: '(renal cell carcinoma OR RCC) AND (nivolumab OR ipilimumab OR pembrolizumab OR cabozantinib OR lenvatinib) AND (phase 3 OR randomized)'
+    trials_query: 'RCC phase 3 immunotherapy targeted therapy'
+    include_terms: ["overall survival", "progression-free survival", "objective response"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Testicular and Germ Cell
+    pubmed_query: '(testicular cancer OR germ cell tumor) AND (cisplatin OR salvage OR trial)'
+    trials_query: 'testicular germ cell tumor trial'
+    include_terms: ["overall survival", "cure", "toxicity"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: GU Toxicity and Survivorship
+    pubmed_query: '(prostate OR bladder OR renal cancer) AND (toxicity OR quality of life OR survivorship) AND (trial OR observational)'
+    trials_query: 'genitourinary cancer quality of life trial'
+    include_terms: ["quality of life", "toxicity", "patient-reported"]
+    exclude_terms: ["mouse", "murine"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet Oncology", "European Urology", "Annals of Oncology"]

@@ -1,0 +1,25 @@
+specialty: HeadNeck
+subcategories:
+  - name: Recurrent Metastatic HNSCC
+    pubmed_query: '(head and neck squamous cell carcinoma OR HNSCC) AND (pembrolizumab OR nivolumab OR cetuximab) AND (phase 3 OR randomized)'
+    trials_query: 'HNSCC recurrent metastatic phase 3'
+    include_terms: ["overall survival", "PD-L1", "response"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Locally Advanced and CRT
+    pubmed_query: '(locally advanced head and neck cancer) AND (chemoradiation OR radiotherapy) AND (trial OR randomized)'
+    trials_query: 'locally advanced head neck chemoradiation trial'
+    include_terms: ["locoregional control", "overall survival"]
+    exclude_terms: ["mouse", "murine"]
+  - name: HPV Positive Oropharynx
+    pubmed_query: '(HPV-positive oropharyngeal cancer) AND (de-intensification OR trial OR randomized)'
+    trials_query: 'HPV positive oropharyngeal deintensification trial'
+    include_terms: ["de-intensification", "quality of life", "survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Salivary and Rare Sites
+    pubmed_query: '(salivary gland cancer OR nasopharyngeal carcinoma OR sinonasal cancer) AND (trial OR phase)'
+    trials_query: 'salivary gland nasopharyngeal carcinoma trial'
+    include_terms: ["response", "progression-free survival"]
+    exclude_terms: ["mouse", "case report"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet Oncology", "Annals of Oncology", "Nature Medicine"]

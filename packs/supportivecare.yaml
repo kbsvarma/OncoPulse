@@ -1,0 +1,30 @@
+specialty: SupportiveCare
+subcategories:
+  - name: Neutropenia and Infection
+    pubmed_query: '(cancer) AND (febrile neutropenia OR growth factor OR infection prophylaxis) AND (randomized OR guideline OR trial)'
+    trials_query: 'cancer neutropenia supportive care trial'
+    include_terms: ["hospitalization", "infection", "guideline", "randomized"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Nausea and Symptom Control
+    pubmed_query: '(cancer) AND (antiemetic OR nausea OR symptom management OR palliative) AND (trial OR randomized)'
+    trials_query: 'cancer symptom control trial'
+    include_terms: ["quality of life", "patient-reported", "symptom"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Bone Health and Skeletal Events
+    pubmed_query: '(cancer) AND (bone metastases OR skeletal-related events OR denosumab OR zoledronic acid) AND (trial OR randomized)'
+    trials_query: 'bone metastases skeletal events trial'
+    include_terms: ["skeletal-related events", "pain", "quality of life"]
+    exclude_terms: ["in vitro", "mouse"]
+  - name: CardioOncology
+    pubmed_query: '(cancer therapy) AND (cardiotoxicity OR cardio-oncology OR anthracycline OR HER2) AND (trial OR cohort)'
+    trials_query: 'cardio oncology cancer therapy trial'
+    include_terms: ["cardiotoxicity", "ejection fraction", "prevention"]
+    exclude_terms: ["mouse", "case report"]
+  - name: Survivorship and Rehabilitation
+    pubmed_query: '(cancer survivorship) AND (rehabilitation OR exercise OR quality of life) AND (trial OR randomized)'
+    trials_query: 'cancer survivorship rehabilitation trial'
+    include_terms: ["fatigue", "quality of life", "function"]
+    exclude_terms: ["mouse", "in vitro"]
+global_boost_terms: ["randomized", "meta-analysis", "systematic review", "guideline"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["J Clin Oncol", "Lancet Oncology", "JAMA Oncology", "NEJM"]

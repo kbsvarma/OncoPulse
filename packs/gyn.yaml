@@ -1,0 +1,30 @@
+specialty: Gyn
+subcategories:
+  - name: Ovarian Frontline
+    pubmed_query: '(ovarian cancer) AND (frontline OR maintenance) AND (PARP OR bevacizumab OR immunotherapy) AND (phase 3 OR randomized)'
+    trials_query: 'ovarian cancer frontline maintenance phase 3'
+    include_terms: ["progression-free survival", "overall survival", "BRCA", "HRD"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Ovarian Recurrent
+    pubmed_query: '(recurrent ovarian cancer) AND (PARP OR antibody drug conjugate OR immunotherapy) AND (phase OR trial)'
+    trials_query: 'recurrent ovarian cancer trial'
+    include_terms: ["response", "platinum-sensitive", "platinum-resistant"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Endometrial
+    pubmed_query: '(endometrial cancer) AND (dostarlimab OR pembrolizumab OR lenvatinib OR mismatch repair) AND (phase 3 OR randomized)'
+    trials_query: 'endometrial cancer phase 3 immunotherapy'
+    include_terms: ["dMMR", "pMMR", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Cervical
+    pubmed_query: '(cervical cancer) AND (immunotherapy OR pembrolizumab OR tisotumab vedotin OR chemoradiation) AND (phase OR randomized)'
+    trials_query: 'cervical cancer trial phase 3'
+    include_terms: ["overall survival", "progression-free survival"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Rare Gyn Tumors
+    pubmed_query: '(uterine sarcoma OR clear cell ovarian OR rare gynecologic cancer) AND (trial OR phase)'
+    trials_query: 'rare gynecologic cancer trial'
+    include_terms: ["response", "survival"]
+    exclude_terms: ["in vitro", "mouse"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet Oncology", "Gynecologic Oncology", "Annals of Oncology"]

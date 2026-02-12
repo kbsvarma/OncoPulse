@@ -1,0 +1,45 @@
+specialty: Heme
+subcategories:
+  - name: CAR-T
+    pubmed_query: '(lymphoma OR leukemia OR myeloma) AND (CAR-T OR chimeric antigen receptor T) AND (phase OR randomized)'
+    trials_query: 'hematologic malignancy CAR-T phase 2 phase 3'
+    include_terms: ["CAR-T", "complete response", "toxicity"]
+    exclude_terms: ["mouse", "murine", "in vitro", "case report"]
+  - name: Bispecific Antibodies
+    pubmed_query: '(lymphoma OR myeloma OR leukemia) AND (bispecific OR blinatumomab OR teclistamab OR mosunetuzumab) AND (phase OR trial)'
+    trials_query: 'hematologic malignancy bispecific antibody trial'
+    include_terms: ["bispecific", "response", "cytokine release syndrome"]
+    exclude_terms: ["mouse", "cell line"]
+  - name: AML and MDS
+    pubmed_query: '(acute myeloid leukemia OR AML OR MDS) AND (venetoclax OR azacitidine OR FLT3 OR IDH) AND (phase OR randomized)'
+    trials_query: 'AML MDS venetoclax phase 3'
+    include_terms: ["overall survival", "complete remission", "minimal residual disease"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: CLL and Indolent Lymphoma
+    pubmed_query: '(CLL OR chronic lymphocytic leukemia OR indolent lymphoma) AND (BTK inhibitor OR venetoclax OR anti-CD20) AND (trial OR phase)'
+    trials_query: 'CLL BTK inhibitor trial'
+    include_terms: ["progression-free survival", "undetectable MRD"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Multiple Myeloma
+    pubmed_query: '(multiple myeloma) AND (daratumumab OR lenalidomide OR teclistamab OR CAR-T) AND (phase OR randomized)'
+    trials_query: 'multiple myeloma phase 3 trial'
+    include_terms: ["minimal residual disease", "progression-free survival", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Hodgkin and T-cell Lymphoma
+    pubmed_query: '(Hodgkin lymphoma OR T-cell lymphoma) AND (checkpoint inhibitor OR brentuximab OR trial)'
+    trials_query: 'Hodgkin lymphoma T-cell lymphoma phase trial'
+    include_terms: ["overall response", "complete response"]
+    exclude_terms: ["mouse", "case report"]
+  - name: Myeloproliferative Neoplasms
+    pubmed_query: '(myelofibrosis OR polycythemia vera OR essential thrombocythemia) AND (ruxolitinib OR fedratinib OR momelotinib OR trial)'
+    trials_query: 'myelofibrosis phase 3 trial'
+    include_terms: ["spleen response", "symptom score", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Transplant and GVHD
+    pubmed_query: '(allogeneic transplant OR GVHD) AND (prophylaxis OR treatment) AND (randomized OR phase)'
+    trials_query: 'GVHD prophylaxis treatment randomized trial'
+    include_terms: ["overall survival", "non-relapse mortality", "acute GVHD"]
+    exclude_terms: ["mouse", "murine"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis", "systematic review"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet", "Blood", "Lancet Haematology", "Nature Medicine"]

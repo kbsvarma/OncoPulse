@@ -1,0 +1,35 @@
+specialty: GI
+subcategories:
+  - name: Colorectal
+    pubmed_query: '(colorectal cancer OR CRC) AND (first-line OR second-line OR metastatic) AND (phase 3 OR randomized)'
+    trials_query: 'colorectal cancer phase 3 trial'
+    include_terms: ["overall survival", "progression-free survival", "RAS", "BRAF"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Pancreatic
+    pubmed_query: '(pancreatic cancer OR PDAC) AND (FOLFIRINOX OR gemcitabine OR immunotherapy) AND (phase OR randomized)'
+    trials_query: 'pancreatic cancer randomized trial'
+    include_terms: ["overall survival", "resectable", "metastatic"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Gastric and GEJ
+    pubmed_query: '(gastric cancer OR gastroesophageal junction) AND (HER2 OR CLDN18.2 OR PD-1) AND (phase OR randomized)'
+    trials_query: 'gastric cancer GEJ phase 3'
+    include_terms: ["HER2", "CLDN18.2", "PD-L1", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Hepatocellular
+    pubmed_query: '(hepatocellular carcinoma OR HCC) AND (atezolizumab OR bevacizumab OR durvalumab OR tremelimumab) AND (phase OR randomized)'
+    trials_query: 'HCC phase 3 immunotherapy'
+    include_terms: ["overall survival", "response rate", "liver"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Biliary Tract
+    pubmed_query: '(cholangiocarcinoma OR biliary tract cancer) AND (FGFR2 OR IDH1 OR immunotherapy OR gemcitabine cisplatin) AND (phase OR trial)'
+    trials_query: 'biliary tract cancer phase trial'
+    include_terms: ["FGFR", "IDH", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Rectal and Localized Disease
+    pubmed_query: '(rectal cancer) AND (total neoadjuvant therapy OR chemoradiation OR watch and wait) AND (trial OR randomized)'
+    trials_query: 'rectal cancer neoadjuvant trial'
+    include_terms: ["pathologic complete response", "disease-free survival"]
+    exclude_terms: ["case report", "mouse"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet Oncology", "Annals of Oncology", "Nature Medicine"]

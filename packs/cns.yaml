@@ -1,0 +1,30 @@
+specialty: CNS
+subcategories:
+  - name: Glioblastoma
+    pubmed_query: '(glioblastoma OR GBM) AND (temozolomide OR tumor treating fields OR immunotherapy) AND (phase OR randomized)'
+    trials_query: 'glioblastoma phase trial'
+    include_terms: ["overall survival", "progression-free survival", "newly diagnosed"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Lower Grade Glioma
+    pubmed_query: '(lower grade glioma OR oligodendroglioma OR astrocytoma) AND (IDH OR trial OR phase)'
+    trials_query: 'lower grade glioma IDH trial'
+    include_terms: ["IDH", "overall survival", "progression-free"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Meningioma
+    pubmed_query: '(meningioma) AND (radiotherapy OR systemic therapy OR trial)'
+    trials_query: 'meningioma clinical trial'
+    include_terms: ["progression-free survival", "WHO grade"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Brain Metastases
+    pubmed_query: '(brain metastases) AND (stereotactic radiosurgery OR immunotherapy OR targeted therapy) AND (trial OR randomized)'
+    trials_query: 'brain metastases stereotactic immunotherapy trial'
+    include_terms: ["intracranial response", "local control", "neurocognitive"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Leptomeningeal Disease
+    pubmed_query: '(leptomeningeal disease OR leptomeningeal metastases) AND (intrathecal OR systemic therapy OR trial)'
+    trials_query: 'leptomeningeal metastases trial'
+    include_terms: ["CNS", "survival"]
+    exclude_terms: ["in vitro", "mouse"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet Oncology", "Neuro-Oncology", "Nature Medicine"]

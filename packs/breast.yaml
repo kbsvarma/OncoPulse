@@ -1,0 +1,45 @@
+specialty: Breast
+subcategories:
+  - name: HER2 Positive
+    pubmed_query: '(breast cancer) AND (HER2 OR trastuzumab OR pertuzumab OR tucatinib OR trastuzumab deruxtecan) AND (randomized OR phase 3)'
+    trials_query: 'HER2 positive breast cancer phase 3'
+    include_terms: ["HER2", "overall survival", "progression-free"]
+    exclude_terms: ["mouse", "murine", "in vitro", "case report"]
+  - name: HR Positive HER2 Negative
+    pubmed_query: '(breast cancer) AND (HR-positive OR hormone receptor positive) AND (CDK4/6 OR ribociclib OR abemaciclib OR palbociclib) AND (phase OR randomized)'
+    trials_query: 'HR positive HER2 negative breast cancer CDK4/6 trial'
+    include_terms: ["CDK4/6", "endocrine therapy", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Triple Negative
+    pubmed_query: '(triple-negative breast cancer OR TNBC) AND (immunotherapy OR pembrolizumab OR sacituzumab govitecan OR PARP) AND (phase OR randomized)'
+    trials_query: 'TNBC immunotherapy phase 3'
+    include_terms: ["pathologic complete response", "PD-L1", "overall survival"]
+    exclude_terms: ["mouse", "murine", "case report"]
+  - name: PARP and DNA Repair
+    pubmed_query: '(breast cancer) AND (PARP inhibitor OR olaparib OR talazoparib OR BRCA) AND (phase OR randomized)'
+    trials_query: 'BRCA breast cancer PARP phase 3'
+    include_terms: ["BRCA", "PARP", "disease-free survival"]
+    exclude_terms: ["cell line", "mouse", "in vitro"]
+  - name: Antibody Drug Conjugates
+    pubmed_query: '(breast cancer) AND (antibody-drug conjugate OR ADC OR trastuzumab deruxtecan OR sacituzumab) AND (phase OR randomized)'
+    trials_query: 'breast cancer ADC trial'
+    include_terms: ["ADC", "objective response", "progression-free"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Early Stage and Adjuvant
+    pubmed_query: '(early breast cancer OR adjuvant breast cancer) AND (neoadjuvant OR adjuvant) AND (phase OR randomized)'
+    trials_query: 'early breast cancer adjuvant trial'
+    include_terms: ["disease-free survival", "pathologic complete response"]
+    exclude_terms: ["in vitro", "case report"]
+  - name: Metastatic Setting
+    pubmed_query: '(metastatic breast cancer) AND (randomized OR phase 3 OR overall survival)'
+    trials_query: 'metastatic breast cancer phase 3'
+    include_terms: ["overall survival", "progression-free survival"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Toxicity and Quality of Life
+    pubmed_query: '(breast cancer) AND (toxicity OR adverse events OR quality of life) AND (systemic therapy OR radiotherapy)'
+    trials_query: 'breast cancer toxicity quality of life trial'
+    include_terms: ["adverse events", "quality of life", "patient-reported"]
+    exclude_terms: ["mouse", "in vitro"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis", "systematic review"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet", "Lancet Oncology", "Annals of Oncology", "Nature Medicine"]

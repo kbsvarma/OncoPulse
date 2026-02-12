@@ -1,0 +1,45 @@
+specialty: Lung
+subcategories:
+  - name: Immunotherapy
+    pubmed_query: '(non-small cell lung cancer OR NSCLC) AND (pembrolizumab OR nivolumab OR atezolizumab OR cemiplimab) AND (randomized OR "phase 3" OR "phase III")'
+    trials_query: 'non-small cell lung cancer immunotherapy phase 3'
+    include_terms: ["phase", "randomized", "overall survival", "progression-free", "PD-L1"]
+    exclude_terms: ["mouse", "murine", "cell line", "in vitro", "case report"]
+  - name: Targeted EGFR
+    pubmed_query: '(NSCLC OR lung adenocarcinoma) AND (EGFR OR osimertinib OR afatinib OR erlotinib) AND (phase OR randomized OR resistance)'
+    trials_query: 'NSCLC EGFR osimertinib resistance'
+    include_terms: ["EGFR", "TKI", "resistance", "phase 3"]
+    exclude_terms: ["mouse", "murine", "in vitro"]
+  - name: ALK ROS1
+    pubmed_query: '(NSCLC) AND (ALK OR ROS1 OR alectinib OR lorlatinib OR crizotinib OR entrectinib) AND (trial OR randomized OR phase)'
+    trials_query: 'NSCLC ALK ROS1 trial'
+    include_terms: ["ALK", "ROS1", "CNS", "progression-free"]
+    exclude_terms: ["mouse", "murine", "cell line"]
+  - name: Small Cell
+    pubmed_query: '(small cell lung cancer OR SCLC) AND (durvalumab OR atezolizumab OR lurbinectedin OR platinum) AND (randomized OR phase)'
+    trials_query: 'small cell lung cancer phase 3 immunotherapy'
+    include_terms: ["extensive stage", "overall survival", "phase 3"]
+    exclude_terms: ["case report", "mouse", "in vitro"]
+  - name: Early Stage and Perioperative
+    pubmed_query: '(resectable NSCLC OR early-stage lung cancer) AND (neoadjuvant OR adjuvant OR perioperative) AND (immunotherapy OR targeted)'
+    trials_query: 'resectable NSCLC neoadjuvant adjuvant trial'
+    include_terms: ["pathologic complete response", "event-free survival", "perioperative"]
+    exclude_terms: ["mouse", "murine", "case report"]
+  - name: Radiation and Combined Modality
+    pubmed_query: '(lung cancer) AND (radiotherapy OR chemoradiation OR SBRT) AND (phase OR randomized OR survival)'
+    trials_query: 'lung cancer chemoradiation SBRT trial'
+    include_terms: ["local control", "overall survival", "toxicity"]
+    exclude_terms: ["cell line", "in vitro", "mouse"]
+  - name: Brain Metastases
+    pubmed_query: '(lung cancer) AND (brain metastases OR CNS metastases) AND (stereotactic OR immunotherapy OR targeted)'
+    trials_query: 'lung cancer brain metastases trial'
+    include_terms: ["intracranial", "CNS", "response"]
+    exclude_terms: ["mouse", "murine", "case report"]
+  - name: Toxicity
+    pubmed_query: '(lung cancer) AND (immune-related adverse events OR pneumonitis OR toxicity) AND (checkpoint inhibitor OR pembrolizumab OR nivolumab)'
+    trials_query: 'lung cancer immunotherapy toxicity'
+    include_terms: ["toxicity", "pneumonitis", "adverse events"]
+    exclude_terms: ["mouse", "murine", "cell line", "in vitro", "case report"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis", "systematic review"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet", "Lancet Oncology", "Annals of Oncology", "Nature Medicine"]

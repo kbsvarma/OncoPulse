@@ -1,0 +1,25 @@
+specialty: Sarcoma
+subcategories:
+  - name: Soft Tissue Sarcoma
+    pubmed_query: '(soft tissue sarcoma) AND (doxorubicin OR trabectedin OR pazopanib OR immunotherapy) AND (phase OR trial)'
+    trials_query: 'soft tissue sarcoma phase trial'
+    include_terms: ["overall survival", "progression-free survival", "response"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Bone Sarcoma
+    pubmed_query: '(osteosarcoma OR Ewing sarcoma OR chondrosarcoma) AND (trial OR phase OR targeted therapy)'
+    trials_query: 'bone sarcoma clinical trial'
+    include_terms: ["event-free survival", "metastatic", "response"]
+    exclude_terms: ["mouse", "murine"]
+  - name: GIST
+    pubmed_query: '(gastrointestinal stromal tumor OR GIST) AND (imatinib OR ripretinib OR avapritinib) AND (trial OR phase)'
+    trials_query: 'GIST phase trial'
+    include_terms: ["KIT", "PDGFRA", "progression-free survival"]
+    exclude_terms: ["in vitro", "mouse"]
+  - name: Retroperitoneal and Rare Sarcoma
+    pubmed_query: '(retroperitoneal sarcoma OR leiomyosarcoma OR liposarcoma) AND (trial OR randomized OR phase)'
+    trials_query: 'retroperitoneal rare sarcoma trial'
+    include_terms: ["local recurrence", "overall survival"]
+    exclude_terms: ["mouse", "case report"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["J Clin Oncol", "Lancet Oncology", "Annals of Oncology", "NEJM"]

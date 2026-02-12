@@ -1,0 +1,35 @@
+specialty: General
+subcategories:
+  - name: Practice Changing RCTs
+    pubmed_query: '(cancer OR oncology) AND (randomized OR "phase 3" OR "phase III") AND (overall survival OR progression-free survival)'
+    trials_query: 'oncology phase 3 randomized'
+    include_terms: ["randomized", "phase 3", "overall survival"]
+    exclude_terms: ["mouse", "murine", "in vitro", "case report"]
+  - name: Meta analyses and Guidelines
+    pubmed_query: '(oncology) AND (meta-analysis OR systematic review OR guideline)'
+    trials_query: 'oncology evidence synthesis guideline'
+    include_terms: ["meta-analysis", "systematic review", "guideline"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Precision Oncology
+    pubmed_query: '(oncology) AND (genomic OR biomarker OR ctDNA OR molecular profiling) AND (trial OR phase)'
+    trials_query: 'precision oncology biomarker trial'
+    include_terms: ["biomarker", "ctDNA", "targeted therapy"]
+    exclude_terms: ["cell line", "mouse"]
+  - name: Toxicity and Supportive Care
+    pubmed_query: '(oncology) AND (toxicity OR adverse events OR supportive care OR quality of life) AND (trial OR randomized)'
+    trials_query: 'oncology supportive care trial'
+    include_terms: ["adverse events", "quality of life", "supportive care"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Real world Evidence
+    pubmed_query: '(oncology) AND (real-world OR registry OR observational) AND (survival OR outcomes)'
+    trials_query: 'oncology real world outcomes'
+    include_terms: ["real-world", "cohort", "outcomes"]
+    exclude_terms: ["case report"]
+  - name: Survivorship
+    pubmed_query: '(cancer survivors OR survivorship) AND (late effects OR quality of life OR rehabilitation)'
+    trials_query: 'cancer survivorship intervention trial'
+    include_terms: ["quality of life", "long-term", "survivorship"]
+    exclude_terms: ["mouse", "in vitro"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis", "systematic review"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet", "Lancet Oncology", "Nature Medicine", "Annals of Oncology"]

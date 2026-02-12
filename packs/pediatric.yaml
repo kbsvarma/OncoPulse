@@ -1,0 +1,30 @@
+specialty: Pediatric
+subcategories:
+  - name: Leukemia and Lymphoma
+    pubmed_query: '(pediatric leukemia OR pediatric lymphoma) AND (trial OR phase OR randomized)'
+    trials_query: 'pediatric leukemia lymphoma clinical trial'
+    include_terms: ["event-free survival", "overall survival", "minimal residual disease"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Brain Tumors
+    pubmed_query: '(pediatric brain tumor OR medulloblastoma OR diffuse midline glioma) AND (trial OR phase)'
+    trials_query: 'pediatric brain tumor trial'
+    include_terms: ["progression-free survival", "overall survival", "quality of life"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Solid Tumors
+    pubmed_query: '(pediatric solid tumor OR neuroblastoma OR osteosarcoma OR rhabdomyosarcoma) AND (trial OR phase)'
+    trials_query: 'pediatric solid tumor clinical trial'
+    include_terms: ["response", "event-free survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Survivorship and Late Effects
+    pubmed_query: '(childhood cancer survivors) AND (late effects OR cardiotoxicity OR endocrine OR quality of life)'
+    trials_query: 'childhood cancer survivorship study'
+    include_terms: ["late effects", "quality of life", "long-term"]
+    exclude_terms: ["mouse", "case report"]
+  - name: Immunotherapy and Cellular Therapy
+    pubmed_query: '(pediatric cancer) AND (immunotherapy OR CAR-T OR bispecific) AND (phase OR trial)'
+    trials_query: 'pediatric cancer immunotherapy CAR-T trial'
+    include_terms: ["CAR-T", "response", "toxicity"]
+    exclude_terms: ["mouse", "in vitro"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["J Clin Oncol", "Lancet Oncology", "NEJM", "Blood", "Nature Medicine"]

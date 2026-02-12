@@ -1,0 +1,30 @@
+specialty: Melanoma
+subcategories:
+  - name: Metastatic Immunotherapy
+    pubmed_query: '(melanoma) AND (nivolumab OR ipilimumab OR pembrolizumab OR relatlimab) AND (phase 3 OR randomized)'
+    trials_query: 'metastatic melanoma immunotherapy phase 3'
+    include_terms: ["overall survival", "progression-free survival", "response"]
+    exclude_terms: ["mouse", "in vitro", "case report"]
+  - name: Adjuvant and Neoadjuvant
+    pubmed_query: '(melanoma) AND (adjuvant OR neoadjuvant) AND (immunotherapy OR targeted) AND (phase OR randomized)'
+    trials_query: 'melanoma adjuvant neoadjuvant trial'
+    include_terms: ["event-free survival", "recurrence-free survival"]
+    exclude_terms: ["mouse", "murine"]
+  - name: BRAF Targeted Therapy
+    pubmed_query: '(melanoma) AND (BRAF OR dabrafenib OR trametinib OR encorafenib) AND (phase OR randomized)'
+    trials_query: 'melanoma BRAF targeted trial'
+    include_terms: ["BRAF", "MEK", "overall survival"]
+    exclude_terms: ["mouse", "in vitro"]
+  - name: Brain Metastases
+    pubmed_query: '(melanoma) AND (brain metastases OR CNS) AND (immunotherapy OR stereotactic)'
+    trials_query: 'melanoma brain metastases trial'
+    include_terms: ["intracranial response", "CNS"]
+    exclude_terms: ["mouse", "murine"]
+  - name: Rare Melanoma Subtypes
+    pubmed_query: '(uveal melanoma OR mucosal melanoma) AND (trial OR phase OR immunotherapy)'
+    trials_query: 'uveal mucosal melanoma trial'
+    include_terms: ["response", "overall survival"]
+    exclude_terms: ["in vitro", "mouse"]
+global_boost_terms: ["phase 3", "phase III", "randomized", "overall survival", "meta-analysis"]
+global_penalty_terms: ["case report", "in vitro", "murine", "mouse"]
+major_journals: ["NEJM", "J Clin Oncol", "Lancet Oncology", "Nature Medicine", "Annals of Oncology"]

@@ -1,0 +1,46 @@
+# OncoPulse
+
+OncoPulse is an ad hoc oncology research inbox for clinicians. It ingests recent PubMed items, ClinicalTrials.gov updates, and OpenAlex citation counts, then applies transparent rule-based ranking and strict structured summaries.
+
+## Features (V1)
+- Specialty/subcategory selection from YAML packs
+- Ad hoc run with time window + filters
+- Transparent scoring with per-item "why ranked"
+- Strict summarization from source text only
+- Tabs for New & Relevant, Most Cited, and Trial Updates
+- Local stars + notes in SQLite
+
+## Quick Start
+
+1. Create and activate a virtual environment.
+2. Install requirements:
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+3. (Optional) Set environment variables:
+
+```bash
+export NCBI_API_KEY="..."
+export NCBI_EMAIL="you@example.com"
+export NCBI_TOOL="OncoPulse"
+export ONCOPULSE_DB_PATH="oncopulse.db"
+```
+
+4. Run tests:
+
+```bash
+pytest -q
+```
+
+5. Start the app:
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+## Notes
+- V1 uses only public/allowed metadata and abstracts.
+- If abstract text is missing, summaries explicitly say so.
