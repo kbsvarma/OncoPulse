@@ -10,7 +10,17 @@ import streamlit as st
 
 from oncopulse import db, packs
 from oncopulse.extract_fields import detect_endpoints, detect_phase, detect_sample_size, detect_study_type
-from oncopulse.services.run_pipeline import RunOptions, build_sources_key, resolve_incremental_days_back, run_pipeline, run_pipeline_query
+from oncopulse.services.run_pipeline import (
+    MODE_ALL,
+    MODE_CLINICIAN,
+    MODE_OPTIONS,
+    RunOptions,
+    build_sources_key,
+    get_mode_preset,
+    resolve_incremental_days_back,
+    run_pipeline,
+    run_pipeline_query,
+)
 from oncopulse.scoring import citations_per_year, hot_score
 from oncopulse.text_utils import clean_text
 
@@ -19,6 +29,11 @@ st.set_page_config(page_title="OncoPulse", layout="wide")
 
 conn = db.get_conn()
 db.init_db(conn)
+
+if "selected_mode" not in st.session_state:
+    st.session_state["selected_mode"] = MODE_ALL
+if "new_custom_name" not in st.session_state:
+    st.session_state["new_custom_name"] = ""
 
 header_l, header_r = st.columns([5, 1])
 with header_l:
@@ -42,6 +57,97 @@ with header_r:
             st.session_state["last_search_key"] = ""
             st.success("Local cache cleared.")
             st.rerun()
+        st.caption("Mode profiles")
+        with st.expander("Manage mode profiles", expanded=False):
+            built_in_view = st.selectbox("View built-in profile", MODE_OPTIONS, key="rs_builtin_view")
+            st.json(get_mode_preset(built_in_view))
+
+            custom_profiles_rs = db.list_custom_mode_profiles(conn)
+            st.caption(f"Custom profiles saved: {len(custom_profiles_rs)}/3")
+            if custom_profiles_rs:
+                chosen_custom = st.selectbox(
+                    "View custom profile",
+                    [p["name"] for p in custom_profiles_rs],
+                    key="rs_custom_view_name",
+                )
+                selected_profile = next((p for p in custom_profiles_rs if p["name"] == chosen_custom), None)
+                if selected_profile:
+                    st.json(selected_profile.get("config", {}))
+            else:
+                st.caption("No custom profiles saved yet.")
+
+            st.caption("Create or update custom profile")
+            custom_name_rs = st.text_input(
+                "Custom profile name",
+                value=st.session_state.get("new_custom_name", ""),
+                key="rs_new_custom_name",
+                placeholder="e.g., Clinic Fast Track",
+            )
+            base_mode_rs = st.selectbox("Base mode", MODE_OPTIONS, index=MODE_OPTIONS.index(MODE_CLINICIAN), key="rs_custom_base_mode")
+            base_rs = get_mode_preset(base_mode_rs)
+
+            r1, r2, r3 = st.columns(3)
+            with r1:
+                rs_include_papers = st.checkbox("Include papers", value=bool(base_rs.get("include_papers", True)), key="rs_inc_papers")
+                rs_include_trials = st.checkbox("Include trials", value=bool(base_rs.get("include_trials", True)), key="rs_inc_trials")
+            with r2:
+                rs_include_preprints = st.checkbox("Include preprints", value=bool(base_rs.get("include_preprints", False)), key="rs_inc_preprints")
+                rs_include_rss = st.checkbox("Include journal RSS", value=bool(base_rs.get("include_journal_rss", False)), key="rs_inc_rss")
+            with r3:
+                rs_include_fda = st.checkbox("Include FDA approvals", value=bool(base_rs.get("include_fda_approvals", False)), key="rs_inc_fda")
+                rs_phase = st.checkbox("Phase II/III only", value=bool(base_rs.get("phase_2_3_only", False)), key="rs_phase")
+                rs_rct = st.checkbox("RCT/meta only", value=bool(base_rs.get("rct_meta_only", False)), key="rs_rct")
+
+            sw_base = dict(base_rs.get("scoring_weights", {}))
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                rs_w_phase3 = st.slider("Phase III", 0, 15, int(sw_base.get("phase_iii", 10)), key="rs_w_phase3")
+                rs_w_rct = st.slider("RCT", 0, 15, int(sw_base.get("randomized", 8)), key="rs_w_rct")
+            with s2:
+                rs_w_os = st.slider("OS", 0, 12, int(sw_base.get("overall_survival", 5)), key="rs_w_os")
+                rs_w_pfs = st.slider("PFS", 0, 12, int(sw_base.get("progression_free_survival", 4)), key="rs_w_pfs")
+            with s3:
+                rs_w_meta = st.slider("Meta-analysis", 0, 15, int(sw_base.get("meta_analysis", 5)), key="rs_w_meta")
+                rs_w_cite = st.slider("Citations multiplier", 0.0, 3.0, float(sw_base.get("citations_multiplier", 1.0)), 0.1, key="rs_w_cite")
+
+            if st.button("Save custom profile", key="rs_save_custom_profile"):
+                name = (custom_name_rs or "").strip()
+                if not name:
+                    st.error("Enter a custom profile name.")
+                elif len(custom_profiles_rs) >= 3 and name not in [p["name"] for p in custom_profiles_rs]:
+                    st.error("Maximum 3 custom profiles allowed.")
+                else:
+                    cfg = {
+                        "include_papers": rs_include_papers,
+                        "include_trials": rs_include_trials,
+                        "include_preprints": rs_include_preprints,
+                        "include_journal_rss": rs_include_rss,
+                        "include_fda_approvals": rs_include_fda,
+                        "phase_2_3_only": rs_phase,
+                        "rct_meta_only": rs_rct,
+                        "scoring_weights": {
+                            "phase_iii": rs_w_phase3,
+                            "randomized": rs_w_rct,
+                            "overall_survival": rs_w_os,
+                            "progression_free_survival": rs_w_pfs,
+                            "meta_analysis": rs_w_meta,
+                            "citations_multiplier": rs_w_cite,
+                        },
+                    }
+                    db.upsert_custom_mode_profile(conn, name, cfg)
+                    st.session_state["selected_mode"] = f"Custom: {name}"
+                    st.session_state["new_custom_name"] = name
+                    st.success(f"Saved custom profile: {name}")
+                    st.rerun()
+
+            if custom_profiles_rs:
+                del_name = st.selectbox("Delete custom profile", [p["name"] for p in custom_profiles_rs], key="rs_delete_name")
+                if st.button("Delete selected profile", key="rs_delete_custom_profile"):
+                    db.delete_custom_mode_profile(conn, del_name)
+                    if st.session_state.get("selected_mode") == f"Custom: {del_name}":
+                        st.session_state["selected_mode"] = MODE_ALL
+                    st.success(f"Deleted custom profile: {del_name}")
+                    st.rerun()
 
 if "has_run_once" not in st.session_state:
     st.session_state["has_run_once"] = False
@@ -155,9 +261,58 @@ def _evidence_label(item: dict) -> str:
         return "Preprint"
     if source == "clinicaltrials":
         return "Trial registry"
-    if source in {"fda", "journal_rss"}:
+    if source == "fda":
+        return "Regulatory"
+    if source == "journal_rss":
+        return "Journal alert"
+    if source == "guideline":
         return "Guideline"
     return "Peer-reviewed"
+
+
+def _evidence_badge_html(label: str) -> str:
+    styles = {
+        "Peer-reviewed": ("#14532d", "#dcfce7"),
+        "Preprint": ("#7c2d12", "#ffedd5"),
+        "Trial registry": ("#1e3a8a", "#dbeafe"),
+        "Regulatory": ("#7f1d1d", "#fee2e2"),
+        "Journal alert": ("#3f3f46", "#f4f4f5"),
+        "Guideline": ("#5b21b6", "#ede9fe"),
+    }
+    bg, fg = styles.get(label, ("#334155", "#f8fafc"))
+    return (
+        f"<span style='display:inline-block;padding:4px 10px;margin:2px 0;border-radius:999px;"
+        f"background:{bg};color:{fg};font-size:0.78rem;font-weight:600;'>Evidence: {label}</span>"
+    )
+
+
+def _confidence_label(item: dict) -> str:
+    source = (item.get("source") or "").lower()
+    has_text = bool(clean_text(item.get("abstract_or_text")))
+    has_lit_id = bool(item.get("pmid") or item.get("doi"))
+    is_registry = source in {"clinicaltrials", "fda"}
+
+    if not has_text:
+        return "No abstract available"
+    if is_registry and has_lit_id:
+        return "Mixed (abstract + registry)"
+    if is_registry:
+        return "Registry-only"
+    return "Abstract-only"
+
+
+def _confidence_badge_html(label: str) -> str:
+    styles = {
+        "Abstract-only": ("#0f766e", "#ccfbf1"),
+        "Registry-only": ("#1e3a8a", "#dbeafe"),
+        "Mixed (abstract + registry)": ("#7c2d12", "#ffedd5"),
+        "No abstract available": ("#52525b", "#f4f4f5"),
+    }
+    bg, fg = styles.get(label, ("#334155", "#f8fafc"))
+    return (
+        f"<span style='display:inline-block;padding:4px 10px;margin:2px 0;border-radius:999px;"
+        f"background:{bg};color:{fg};font-size:0.78rem;font-weight:600;'>Confidence: {label}</span>"
+    )
 
 
 def _score_badges(explain: list[str]) -> list[str]:
@@ -239,19 +394,6 @@ def _pick_source_snippets(item: dict, explain: list[str], max_snippets: int = 3)
     return sents[:max_snippets]
 
 
-def _highlight_snippet(sentence: str, explain: list[str]) -> str:
-    highlighted = sentence
-    terms = _snippet_terms(explain)
-    for term in sorted(set(terms), key=len, reverse=True):
-        highlighted = re.sub(
-            rf"(?i)\b({re.escape(term)})\b",
-            r"<mark>\1</mark>",
-            highlighted,
-        )
-    highlighted = re.sub(r"(\b\d+(?:\.\d+)?%?\b)", r"<mark>\1</mark>", highlighted)
-    return highlighted
-
-
 def _summary_field(summary_text: str, label: str) -> str:
     lines = [clean_text(ln) for ln in str(summary_text or "").splitlines() if clean_text(ln)]
     prefix = f"{label.lower()}:"
@@ -283,11 +425,15 @@ def render_top_card(item: dict):
     abstract_preview = _preview_sentences(item.get("abstract_or_text"), max_sentences=2)
 
     with st.container(border=True):
+        evidence = _evidence_label(item)
+        confidence = _confidence_label(item)
         st.markdown(f"### {item.get('title')}")
         st.caption(
             f"Date: {item.get('published_at') or item.get('updated_at') or 'N/A'} | "
-            f"Source: {item.get('source')} | Evidence: {_evidence_label(item)}"
+            f"Source: {item.get('source')}"
         )
+        st.markdown(_evidence_badge_html(evidence), unsafe_allow_html=True)
+        st.markdown(_confidence_badge_html(confidence), unsafe_allow_html=True)
         if item.get("url"):
             st.markdown(f"[Open source link]({item['url']})")
 
@@ -357,6 +503,8 @@ def render_card(item: dict, panel: str):
 
     with st.container(border=True):
         st.markdown(f"### {item.get('title')}")
+        evidence = _evidence_label(item)
+        confidence = _confidence_label(item)
         m1, m2, m3, m4 = st.columns(4)
         with m1:
             st.caption(f"Source: {item.get('source')}")
@@ -371,7 +519,8 @@ def render_card(item: dict, panel: str):
             if c_rate is not None:
                 c_text += f" ({c_rate}/yr)"
             st.caption(f"Citations: {c_text}")
-        st.caption(f"Evidence: {_evidence_label(item)}")
+        st.markdown(_evidence_badge_html(evidence), unsafe_allow_html=True)
+        st.markdown(_confidence_badge_html(confidence), unsafe_allow_html=True)
 
         st.caption(f"Venue: {item.get('venue') or 'N/A'}")
         st.caption(f"PMID: {item.get('pmid') or '-'} | DOI: {item.get('doi') or '-'} | NCT: {item.get('nct_id') or '-'}")
@@ -394,7 +543,7 @@ def render_card(item: dict, panel: str):
         snippets = _pick_source_snippets(item, explain, max_snippets=3)
         if snippets:
             for snip in snippets:
-                st.markdown(f"- {_highlight_snippet(snip, explain)}", unsafe_allow_html=True)
+                st.markdown(f"- {clean_text(snip)}")
         else:
             st.caption("No source snippets available.")
 
@@ -416,83 +565,74 @@ def render_card(item: dict, panel: str):
             st.markdown(f"[Open source link]({item['url']})")
 
 
-search_mode = st.toggle("Search mode", value=False, help="Search by free-text oncology topic instead of specialty packs.")
+search_mode = st.toggle("Search mode", value=True, help="Search by free-text oncology query.")
 search_query = st.text_input(
     "Search oncology topic",
     placeholder="e.g., metastatic NSCLC pembrolizumab phase 3",
     disabled=not search_mode,
 )
 
-# Build grouped specialties.
-grouped_specialties: dict[str, list[str]] = {}
-for s in specialties:
-    grouped_specialties.setdefault(_group_for_specialty(s), []).append(s)
-for group_name in grouped_specialties:
-    grouped_specialties[group_name] = sorted(grouped_specialties[group_name], key=_pretty_specialty)
-
-group_order = [k for k in SPECIALTY_GROUPS if k in grouped_specialties]
-if "Other" in grouped_specialties:
-    group_order.append("Other")
-group_options = ["<Select specialty group>"] + group_order
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    selected_group_choice = st.selectbox("Specialty group", group_options, index=0, disabled=search_mode)
-selected_group = None if selected_group_choice.startswith("<") else selected_group_choice
-
-visible_specialties = grouped_specialties.get(selected_group or "", [])
-visible_specialties = sorted(visible_specialties, key=_pretty_specialty)
-specialty_options = ["<Any specialty in group>"] + visible_specialties
-
-with col2:
+specialty_sorted = sorted(specialties, key=_pretty_specialty)
+top1, top2, top3, top4 = st.columns([2, 2, 1, 2])
+with top1:
     specialty_choice = st.selectbox(
         "Specialty",
-        specialty_options,
+        ["<Select specialty>"] + specialty_sorted,
         index=0,
-        disabled=search_mode or not selected_group,
+        disabled=search_mode,
         format_func=lambda x: x if x.startswith("<") else _pretty_specialty(x),
     )
 specialty = None if specialty_choice.startswith("<") else specialty_choice
 
 subcategories = packs.list_subcategories(specialty) if specialty else []
-subcategory_options = ["<Any subcategory>"] + subcategories
-with col3:
+with top2:
     subcategory_choice = st.selectbox(
         "Subcategory",
-        subcategory_options,
+        ["<Select subcategory>"] + subcategories,
         index=0,
         disabled=search_mode or not specialty,
     )
 subcategory = None if subcategory_choice.startswith("<") else subcategory_choice
 
-with col4:
-    window_options = {
-        "One week": 7,
-        "One month": 30,
-        "Quarter": 90,
-        "Year": 365,
-    }
+with top3:
+    window_options = {"One week": 7, "One month": 30, "Quarter": 90, "Year": 365}
     selected_window = st.selectbox("Time window", list(window_options.keys()), index=1)
     days_back = window_options[selected_window]
 
-st.markdown("**Data sources**")
-s1, s2, s3, s4, s5 = st.columns(5)
-with s1:
-    include_papers = st.checkbox("PubMed/Europe PMC papers", value=True)
-with s2:
-    include_trials = st.checkbox("ClinicalTrials.gov", value=True)
-with s3:
-    include_preprints = st.checkbox("bioRxiv/medRxiv", value=False)
-with s4:
-    include_journal_rss = st.checkbox("Journal RSS", value=False)
-with s5:
-    include_fda_approvals = st.checkbox("FDA approvals", value=False)
+with top4:
+    custom_profiles = db.list_custom_mode_profiles(conn)
+    custom_name_map = {f"Custom: {p['name']}": p for p in custom_profiles}
+    mode_options = MODE_OPTIONS + list(custom_name_map.keys())
+    if st.session_state["selected_mode"] not in mode_options:
+        st.session_state["selected_mode"] = MODE_ALL
+    selected_mode = st.selectbox("Mode", mode_options, index=mode_options.index(st.session_state["selected_mode"]))
+    st.session_state["selected_mode"] = selected_mode
+
+if st.session_state["selected_mode"] in custom_name_map:
+    mode_config = dict(custom_name_map[st.session_state["selected_mode"]].get("config", {}))
+else:
+    mode_config = dict(get_mode_preset(st.session_state["selected_mode"]))
+
+include_papers = bool(mode_config.get("include_papers", True))
+include_trials = bool(mode_config.get("include_trials", True))
+include_preprints = bool(mode_config.get("include_preprints", False))
+include_journal_rss = bool(mode_config.get("include_journal_rss", False))
+include_fda_approvals = bool(mode_config.get("include_fda_approvals", False))
+phase_2_3_only = bool(mode_config.get("phase_2_3_only", False))
+rct_meta_only = bool(mode_config.get("rct_meta_only", False))
+scoring_weights = dict(mode_config.get("scoring_weights", {}))
+
+st.caption(
+    f"Mode profile: papers={'on' if include_papers else 'off'}, trials={'on' if include_trials else 'off'}, "
+    f"phase II/III only={'on' if phase_2_3_only else 'off'}, rct/meta only={'on' if rct_meta_only else 'off'}"
+)
 
 any_source_selected = any(
     [include_papers, include_trials, include_preprints, include_journal_rss, include_fda_approvals]
 )
 
 preview_options = RunOptions(
+    mode_name=st.session_state["selected_mode"],
     days_back=days_back,
     include_trials=include_trials,
     include_papers=include_papers,
@@ -506,7 +646,7 @@ preview_options = RunOptions(
 last_run_scope: tuple[str, str] | None = None
 if search_mode and search_query.strip():
     last_run_scope = ("search", _query_key(search_query.strip()))
-elif (not search_mode) and specialty and subcategory:
+elif specialty and subcategory:
     last_run_scope = (specialty, subcategory)
 
 if last_run_scope:
@@ -526,9 +666,18 @@ if last_run_scope:
     else:
         st.caption("Last run: none for current scope/sources.")
 
-can_run = bool(search_query.strip()) if search_mode else bool(selected_group)
-if st.button("Run", type="primary", disabled=(not can_run or not any_source_selected)):
+run_row_l, run_row_r = st.columns([1, 8])
+with run_row_l:
+    run_clicked = st.button(
+        "Run",
+        type="primary",
+        disabled=(not search_query.strip()) if search_mode else (not (specialty and subcategory)),
+    )
+
+if run_clicked:
     with st.spinner("Running ingestion and ranking..."):
+        selected_mode_name = st.session_state.get("selected_mode", MODE_ALL)
+        is_all_mode = selected_mode_name == MODE_ALL
         if fast_mode:
             limits = {
                 "retmax_pubmed": 15,
@@ -537,7 +686,7 @@ if st.button("Run", type="primary", disabled=(not can_run or not any_source_sele
                 "preprint_limit": 8,
                 "rss_limit": 8,
                 "fda_limit": 8,
-                "max_run_seconds": 8,
+                "max_run_seconds": 20 if is_all_mode else 8,
                 "max_total_run_seconds": 25,
             }
         else:
@@ -548,11 +697,12 @@ if st.button("Run", type="primary", disabled=(not can_run or not any_source_sele
                 "preprint_limit": 20,
                 "rss_limit": 20,
                 "fda_limit": 20,
-                "max_run_seconds": 12,
+                "max_run_seconds": 28 if is_all_mode else 12,
                 "max_total_run_seconds": 45,
             }
 
         run_options_kwargs = dict(
+            mode_name=st.session_state["selected_mode"],
             days_back=days_back,
             retmax_pubmed=limits["retmax_pubmed"],
             trials_limit=limits["trials_limit"],
@@ -567,8 +717,9 @@ if st.button("Run", type="primary", disabled=(not can_run or not any_source_sele
             include_fda_approvals=include_fda_approvals,
             enrich_citations=enrich_citations and not fast_mode,
             enable_semantic_scholar=enable_semantic_scholar and enrich_citations and not fast_mode,
-            phase_2_3_only=False,
-            rct_meta_only=False,
+            phase_2_3_only=phase_2_3_only,
+            rct_meta_only=rct_meta_only,
+            scoring_weights=scoring_weights,
             incremental_cap_days=days_back,
             force_full_refresh=force_full_refresh,
         )
@@ -590,16 +741,7 @@ if st.button("Run", type="primary", disabled=(not can_run or not any_source_sele
             timed_out_runs = 1 if result.get("timed_out") else 0
             st.session_state["last_search_key"] = _query_key(search_query.strip())
         else:
-            if specialty and subcategory:
-                targets = [(specialty, subcategory)]
-            elif specialty:
-                targets = [(specialty, sub) for sub in packs.list_subcategories(specialty)]
-            else:
-                targets = []
-                for sp in visible_specialties:
-                    for sub in packs.list_subcategories(sp):
-                        targets.append((sp, sub))
-
+            targets = [(specialty, subcategory)] if (specialty and subcategory) else []
             max_total_run_seconds = limits["max_total_run_seconds"]
             for sp, sub in targets:
                 if (time.monotonic() - overall_start) > max_total_run_seconds:
@@ -623,14 +765,15 @@ if st.button("Run", type="primary", disabled=(not can_run or not any_source_sele
         st.success(f"Run complete. Packs run: {run_count} | Ingested: {total_ingested} | Deduped: {total_deduped}")
 
 if not any_source_selected:
-    st.info("Select at least one data source to enable Run.")
+    st.info("Current mode disabled all data sources. Choose a different mode to run.")
     st.stop()
 
 if search_mode and not search_query.strip():
-    st.info("Enter a search query to enable Run. In search mode, dropdown selections are disabled.")
+    st.info("Enter a search query to enable Run.")
     st.stop()
-if not search_mode and not selected_group:
-    st.info("Select a specialty group to enable Run. In browse mode, search is disabled.")
+
+if (not search_mode) and (not specialty or not subcategory):
+    st.info("Select specialty and subcategory to enable Run.")
     st.stop()
 
 
@@ -638,19 +781,10 @@ def _load_items() -> list[dict]:
     loaded: list[dict] = []
     if search_mode:
         key = st.session_state.get("last_search_key", "")
-        if not key:
-            return []
-        loaded.extend(db.get_ranked_items(conn, "search", key, mode="new", include_trials=True))
-    else:
-        if specialty and subcategory:
-            loaded.extend(db.get_ranked_items(conn, specialty, subcategory, mode="new", include_trials=True))
-        elif specialty:
-            for sub in packs.list_subcategories(specialty):
-                loaded.extend(db.get_ranked_items(conn, specialty, sub, mode="new", include_trials=True))
-        else:
-            for sp in visible_specialties:
-                for sub in packs.list_subcategories(sp):
-                    loaded.extend(db.get_ranked_items(conn, sp, sub, mode="new", include_trials=True))
+        if key:
+            loaded.extend(db.get_ranked_items(conn, "search", key, mode="new", include_trials=True))
+    elif specialty and subcategory:
+        loaded.extend(db.get_ranked_items(conn, specialty, subcategory, mode="new", include_trials=True))
 
     seen_ids: set[int] = set()
     deduped: list[dict] = []
@@ -665,27 +799,17 @@ def _load_items() -> list[dict]:
 
 all_items = _load_items()
 
-# Results section filters/sort (requested to be here, not in top controls).
-st.markdown("**Results filters**")
-rf1, rf2 = st.columns(2)
-with rf1:
-    result_phase_only = st.checkbox("Phase II/III only", value=False, key="result_phase")
-with rf2:
-    result_rct_meta_only = st.checkbox("RCT/meta only", value=False, key="result_rct")
-
 trial_sources = {"clinicaltrials", "fda"}
 paper_items = [i for i in all_items if i.get("source") not in trial_sources]
 trial_items = [i for i in all_items if i.get("source") in trial_sources]
 recent_paper_items = [i for i in paper_items if _is_within_window(i, days_back)]
 recent_trial_items = [i for i in trial_items if _is_within_window(i, days_back)]
 
-recent_paper_items = _result_filter(recent_paper_items, result_phase_only, result_rct_meta_only)
-recent_trial_items = _result_filter(recent_trial_items, result_phase_only, result_rct_meta_only)
 
-
-t0, t1, t2, t3 = st.tabs(["Top 7", "New & Most Cited", "Trials", "Table"])
+t0, t1, t2, t3, t4 = st.tabs(["Digest", "New", "Trials", "Saved", "Research Tools"])
 with t0:
     if st.session_state.get("has_run_once", False):
+        st.markdown("#### Top 7 in 5 minutes")
         top_priority = st.selectbox(
             "Top 7 priority",
             ["Balanced", "Papers first", "Trials first"],
@@ -719,7 +843,7 @@ with t0:
 
 with t1:
     if st.session_state.get("has_run_once", False):
-        new_sort = st.selectbox("Sort (New & Most Cited)", ["Newest", "Highest score", "Most cited", "Hot"], key="sort_new")
+        new_sort = st.selectbox("Sort (New)", ["Newest", "Highest score", "Most cited", "Hot"], key="sort_new")
         if new_sort == "Most cited":
             new_items = sorted(
                 recent_paper_items,
@@ -782,6 +906,9 @@ with t2:
             render_card(item, panel="trials")
 
 with t3:
+    st.caption("Saved view will list starred/bookmarked papers in a future update.")
+
+with t4:
     if st.session_state.get("has_run_once", False):
         table_scope = st.selectbox(
             "Table scope",

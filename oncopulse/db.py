@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS run_history (
   error_text TEXT
 );
 
+CREATE TABLE IF NOT EXISTS custom_mode_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  config_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_items_specialty_subcategory ON items(specialty, subcategory);
 CREATE INDEX IF NOT EXISTS idx_items_source ON items(source);
 CREATE INDEX IF NOT EXISTS idx_items_published_at ON items(published_at);
@@ -204,6 +212,7 @@ def clear_all_local_cache(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM citation_cache")
     conn.execute("DELETE FROM run_history")
     conn.execute("DELETE FROM topics")
+    conn.execute("DELETE FROM custom_mode_profiles")
     conn.commit()
 
 
@@ -317,6 +326,41 @@ def get_last_successful_run(
     sql += " ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1"
     row = conn.execute(sql, params).fetchone()
     return dict(row) if row else None
+
+
+def list_custom_mode_profiles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute("SELECT * FROM custom_mode_profiles ORDER BY updated_at DESC").fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["config"] = json.loads(d.get("config_json") or "{}")
+        except Exception:
+            d["config"] = {}
+        out.append(d)
+    return out
+
+
+def upsert_custom_mode_profile(conn: sqlite3.Connection, name: str, config: dict[str, Any]) -> None:
+    now = _now_iso_utc()
+    payload = json.dumps(config)
+    existing = conn.execute("SELECT id FROM custom_mode_profiles WHERE name = ?", (name,)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE custom_mode_profiles SET config_json = ?, updated_at = ? WHERE name = ?",
+            (payload, now, name),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO custom_mode_profiles (name, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (name, payload, now, now),
+        )
+    conn.commit()
+
+
+def delete_custom_mode_profile(conn: sqlite3.Connection, name: str) -> None:
+    conn.execute("DELETE FROM custom_mode_profiles WHERE name = ?", (name,))
+    conn.commit()
 
 
 def finish_run(

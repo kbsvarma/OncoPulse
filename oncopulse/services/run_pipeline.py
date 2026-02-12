@@ -8,6 +8,7 @@ from .. import db, packs, scoring, summarize
 from ..ingest import clinicaltrials, dedup, europepmc, fda, openalex, preprints, pubmed, rss_feeds, semanticscholar
 
 MODE_CLINICIAN = "Clinician (Practice-changing)"
+MODE_ALL = "All"
 MODE_SAFETY_WATCH = "Safety Watch"
 MODE_TRIAL_RADAR = "Trial Radar"
 MODE_RESEARCHER = "Researcher"
@@ -15,6 +16,7 @@ MODE_FELLOW = "Fellow"
 
 MODE_OPTIONS = [
     MODE_CLINICIAN,
+    MODE_ALL,
     MODE_SAFETY_WATCH,
     MODE_TRIAL_RADAR,
     MODE_RESEARCHER,
@@ -37,6 +39,16 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
             "progression_free_survival": 4,
             "meta_analysis": 5,
         },
+    },
+    MODE_ALL: {
+        "include_papers": True,
+        "include_trials": True,
+        "include_preprints": True,
+        "include_journal_rss": True,
+        "include_fda_approvals": True,
+        "phase_2_3_only": False,
+        "rct_meta_only": False,
+        "scoring_weights": {},
     },
     MODE_SAFETY_WATCH: {
         "include_papers": True,

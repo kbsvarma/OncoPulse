@@ -28,6 +28,7 @@ oncopulse/ingest/source_extract.py
 oncopulse/services/__init__.py
 oncopulse/services/run_pipeline.py
 tests/test_connectors.py
+tests/test_custom_modes.py
 tests/test_dedup.py
 tests/test_extract_fields.py
 tests/test_incremental_runs.py
