@@ -1,16 +1,18 @@
 import inspect
+import io
 import json
+import csv
 from datetime import datetime, timedelta, timezone
+import re
 import time
 
 import streamlit as st
 
 from oncopulse import db, packs
-from oncopulse.ingest import europepmc, pubmed
-from oncopulse.ingest.source_extract import extract_abstract_from_url
-from oncopulse.services.run_pipeline import RunOptions, run_pipeline, run_pipeline_query
-from oncopulse.summarize import summarize_item
-from oncopulse.text_utils import clean_multiline_text, clean_text
+from oncopulse.extract_fields import detect_endpoints, detect_phase, detect_sample_size, detect_study_type
+from oncopulse.services.run_pipeline import RunOptions, build_sources_key, resolve_incremental_days_back, run_pipeline, run_pipeline_query
+from oncopulse.scoring import citations_per_year, hot_score
+from oncopulse.text_utils import clean_text
 
 
 st.set_page_config(page_title="OncoPulse", layout="wide")
@@ -25,6 +27,13 @@ with header_r:
     with st.popover("Run settings"):
         fast_mode = st.toggle("Fast mode", value=True)
         enrich_citations = st.toggle("Enrich citations", value=False)
+        enable_semantic_scholar = st.toggle(
+            "Semantic Scholar fallback (PMID)",
+            value=False,
+            help="Used only when DOI is missing and citation enrichment is enabled.",
+            disabled=not enrich_citations,
+        )
+        force_full_refresh = st.toggle("Force full refresh", value=False, help="Ignore incremental window and use full selected time window.")
         st.caption("Maintenance")
         confirm_clear_cache = st.checkbox("Confirm clear local cache", value=False)
         if st.button("Clear local cache", disabled=not confirm_clear_cache):
@@ -140,6 +149,200 @@ def _result_filter(items: list[dict], phase_only: bool, rct_meta_only: bool) -> 
     return out
 
 
+def _evidence_label(item: dict) -> str:
+    source = (item.get("source") or "").lower()
+    if source == "preprint":
+        return "Preprint"
+    if source == "clinicaltrials":
+        return "Trial registry"
+    if source in {"fda", "journal_rss"}:
+        return "Guideline"
+    return "Peer-reviewed"
+
+
+def _score_badges(explain: list[str]) -> list[str]:
+    badges: list[str] = []
+    for x in explain:
+        lx = x.lower()
+        if "phase iii" in lx or "phase 3" in lx:
+            badges.append("Phase III")
+        elif "phase ii" in lx or "phase 2" in lx:
+            badges.append("Phase II")
+        elif "randomized" in lx or "rct" in lx:
+            badges.append("RCT")
+        elif "meta-analysis" in lx or "systematic review" in lx:
+            badges.append("Meta-analysis")
+        elif "overall survival" in lx:
+            badges.append("OS")
+        elif "progression-free survival" in lx:
+            badges.append("PFS")
+        elif "sample size" in lx:
+            badges.append("N>=200")
+        elif "major journal" in lx:
+            badges.append("Major journal")
+        elif "citations bonus" in lx:
+            badges.append("Citations")
+        elif "preclinical signal" in lx:
+            badges.append("Preclinical penalty")
+        elif "case report" in lx:
+            badges.append("Case report penalty")
+    # Keep unique order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for b in badges:
+        if b in seen:
+            continue
+        seen.add(b)
+        unique.append(b)
+    return unique
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s and len(s.strip()) >= 20]
+
+
+def _snippet_terms(explain: list[str]) -> list[str]:
+    terms = ["overall survival", "progression-free survival", "randomized", "rct", "phase", "meta-analysis"]
+    joined = " ".join(explain).lower()
+    if "toxicity" in joined:
+        terms.append("toxicity")
+    if "adverse" in joined:
+        terms.append("adverse")
+    return terms
+
+
+def _pick_source_snippets(item: dict, explain: list[str], max_snippets: int = 3) -> list[str]:
+    text = clean_text(item.get("abstract_or_text"))
+    if not text:
+        return []
+    sents = _split_sentences(text)
+    if not sents:
+        return []
+
+    terms = _snippet_terms(explain)
+    scored: list[tuple[int, int, str]] = []
+    for idx, sent in enumerate(sents):
+        ls = sent.lower()
+        score = 0
+        if any(t in ls for t in terms):
+            score += 3
+        if re.search(r"\b\d+(?:\.\d+)?%?\b", sent):
+            score += 2
+        if 60 <= len(sent) <= 320:
+            score += 1
+        scored.append((score, idx, sent))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    picked = [s for sc, _, s in scored if sc > 0][:max_snippets]
+    if picked:
+        return picked
+    return sents[:max_snippets]
+
+
+def _highlight_snippet(sentence: str, explain: list[str]) -> str:
+    highlighted = sentence
+    terms = _snippet_terms(explain)
+    for term in sorted(set(terms), key=len, reverse=True):
+        highlighted = re.sub(
+            rf"(?i)\b({re.escape(term)})\b",
+            r"<mark>\1</mark>",
+            highlighted,
+        )
+    highlighted = re.sub(r"(\b\d+(?:\.\d+)?%?\b)", r"<mark>\1</mark>", highlighted)
+    return highlighted
+
+
+def _summary_field(summary_text: str, label: str) -> str:
+    lines = [clean_text(ln) for ln in str(summary_text or "").splitlines() if clean_text(ln)]
+    prefix = f"{label.lower()}:"
+    for line in lines:
+        if line.lower().startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return "Not stated"
+
+
+def _preview_sentences(text: str, max_sentences: int = 3) -> str:
+    cleaned = clean_text(text)
+    if not cleaned:
+        return ""
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", cleaned) if s.strip()]
+    return " ".join(sents[:max_sentences])
+
+
+def render_top_card(item: dict):
+    try:
+        explain = json.loads(item.get("score_explain_json") or "[]")
+    except Exception:
+        explain = []
+    badges = _score_badges(explain)
+    summary = str(item.get("summary_text") or "")
+    study_type = _summary_field(summary, "Study type / phase")
+    endpoints = _summary_field(summary, "Endpoints mentioned")
+    key_finding = _summary_field(summary, "Key finding")
+    why_matters = _summary_field(summary, "Why it matters")
+    abstract_preview = _preview_sentences(item.get("abstract_or_text"), max_sentences=2)
+
+    with st.container(border=True):
+        st.markdown(f"### {item.get('title')}")
+        st.caption(
+            f"Date: {item.get('published_at') or item.get('updated_at') or 'N/A'} | "
+            f"Source: {item.get('source')} | Evidence: {_evidence_label(item)}"
+        )
+        if item.get("url"):
+            st.markdown(f"[Open source link]({item['url']})")
+
+        if badges:
+            badge_html = " ".join(
+                f"<span style='display:inline-block;padding:4px 10px;margin:2px;border-radius:999px;background:#1e293b;color:#e2e8f0;font-size:0.80rem;'>{b}</span>"
+                for b in badges
+            )
+            st.markdown(badge_html, unsafe_allow_html=True)
+        st.caption("Why ranked: " + (", ".join(explain) if explain else "No rule matches"))
+        if abstract_preview:
+            st.markdown(f"**Abstract preview:** {abstract_preview}")
+        st.markdown(f"**Study type / phase:** {study_type}")
+        st.markdown(f"**Endpoints:** {endpoints}")
+        st.markdown(f"**Summary:** {key_finding}")
+        st.markdown(f"**Why it matters:** {why_matters}")
+
+
+def _identifier_blob(item: dict) -> str:
+    doi = item.get("doi") or "-"
+    pmid = item.get("pmid") or "-"
+    nct = item.get("nct_id") or "-"
+    return f"DOI:{doi} | PMID:{pmid} | NCT:{nct}"
+
+
+def _table_row(item: dict) -> dict:
+    text = f"{item.get('title', '')} {item.get('abstract_or_text', '')}"
+    phase = clean_text(item.get("phase")) or detect_phase(text)
+    study_type = clean_text(item.get("study_type")) or detect_study_type(text)
+    endpoints = detect_endpoints(text)
+    sample_size = detect_sample_size(text)
+    return {
+        "Date": item.get("published_at") or item.get("updated_at") or "Unknown",
+        "Title": item.get("title") or "Untitled",
+        "Phase": phase if phase else "Unknown",
+        "Study type": study_type if study_type else "Unknown",
+        "Endpoints": endpoints,
+        "N heuristic": sample_size,
+        "Citations": item.get("citations") if item.get("citations") is not None else "N/A",
+        "Source": item.get("source") or "Unknown",
+        "Identifiers": _identifier_blob(item),
+        "Link": item.get("url") or "",
+    }
+
+
+def _rows_to_csv(rows: list[dict]) -> str:
+    if not rows:
+        return ""
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
+
+
 def render_card(item: dict, panel: str):
     def _summary_to_markdown(summary_text: str) -> str:
         lines = [ln.strip() for ln in summary_text.splitlines() if ln.strip()]
@@ -162,7 +365,13 @@ def render_card(item: dict, panel: str):
         with m3:
             st.caption(f"Score: {item.get('score', 0)}")
         with m4:
-            st.caption(f"Citations: {item.get('citations') if item.get('citations') is not None else 'N/A'}")
+            c_val = item.get("citations")
+            c_rate = citations_per_year(item)
+            c_text = f"{c_val}" if c_val is not None else "N/A"
+            if c_rate is not None:
+                c_text += f" ({c_rate}/yr)"
+            st.caption(f"Citations: {c_text}")
+        st.caption(f"Evidence: {_evidence_label(item)}")
 
         st.caption(f"Venue: {item.get('venue') or 'N/A'}")
         st.caption(f"PMID: {item.get('pmid') or '-'} | DOI: {item.get('doi') or '-'} | NCT: {item.get('nct_id') or '-'}")
@@ -172,51 +381,36 @@ def render_card(item: dict, panel: str):
         except Exception:
             explain = []
         st.markdown("**Why ranked**")
-        st.markdown(", ".join(explain) if explain else "No rule matches")
+        badges = _score_badges(explain)
+        if badges:
+            badge_html = " ".join(
+                f"<span style='display:inline-block;padding:4px 10px;margin:2px;border-radius:999px;background:#1e293b;color:#e2e8f0;font-size:0.80rem;'>{b}</span>"
+                for b in badges
+            )
+            st.markdown(badge_html, unsafe_allow_html=True)
+        st.caption(", ".join(explain) if explain else "No rule matches")
+
+        st.markdown("**What I used (source snippets)**")
+        snippets = _pick_source_snippets(item, explain, max_snippets=3)
+        if snippets:
+            for snip in snippets:
+                st.markdown(f"- {_highlight_snippet(snip, explain)}", unsafe_allow_html=True)
+        else:
+            st.caption("No source snippets available.")
 
         st.markdown("**Abstract**")
         abstract_text = clean_text(item.get("abstract_or_text"))
-        pmid = (item.get("pmid") or "").strip()
-        doi = (item.get("doi") or "").strip()
-        url = (item.get("url") or "").strip()
-        backfill_key = f"abs_backfill_{item.get('id')}"
-        if not abstract_text and not st.session_state.get(backfill_key, False):
-            st.session_state[backfill_key] = True
-            fetched_abs = ""
-
-            # 1) PubMed by PMID
-            if pmid:
-                try:
-                    fetched = pubmed.fetch([pmid])
-                    if fetched:
-                        fetched_abs = clean_text(fetched[0].get("abstract_or_text"))
-                except Exception:
-                    pass
-
-            # 2) Europe PMC by PMID/DOI
-            if not fetched_abs:
-                try:
-                    fetched_abs = clean_text(europepmc.fetch_abstract_by_ids(pmid=pmid or None, doi=doi or None))
-                except Exception:
-                    pass
-
-            # 3) Source page metadata/JSON-LD (for publisher pages with visible outline)
-            if not fetched_abs and url:
-                fetched_abs = clean_text(extract_abstract_from_url(url))
-
-            if fetched_abs:
-                item["abstract_or_text"] = fetched_abs
-                item["summary_text"] = summarize_item(item)
-                db.update_item_text_fields(conn, int(item["id"]), fetched_abs, item["summary_text"])
-                abstract_text = fetched_abs
         if abstract_text:
+            preview = _preview_sentences(abstract_text, max_sentences=3)
+            if preview:
+                st.markdown(preview)
             with st.expander("View abstract", expanded=False):
                 st.write(abstract_text)
         else:
             st.write("No abstract available.")
 
         st.markdown("**Structured summary**")
-        st.markdown(_summary_to_markdown(clean_multiline_text(item.get("summary_text")) or "No summary"))
+        st.markdown(_summary_to_markdown(clean_text(item.get("summary_text")) or "No summary"))
 
         if item.get("url"):
             st.markdown(f"[Open source link]({item['url']})")
@@ -298,6 +492,40 @@ any_source_selected = any(
     [include_papers, include_trials, include_preprints, include_journal_rss, include_fda_approvals]
 )
 
+preview_options = RunOptions(
+    days_back=days_back,
+    include_trials=include_trials,
+    include_papers=include_papers,
+    include_preprints=include_preprints,
+    include_journal_rss=include_journal_rss,
+    include_fda_approvals=include_fda_approvals,
+    force_full_refresh=force_full_refresh,
+    incremental_cap_days=days_back,
+)
+
+last_run_scope: tuple[str, str] | None = None
+if search_mode and search_query.strip():
+    last_run_scope = ("search", _query_key(search_query.strip()))
+elif (not search_mode) and specialty and subcategory:
+    last_run_scope = (specialty, subcategory)
+
+if last_run_scope:
+    last_success = db.get_last_successful_run(
+        conn,
+        last_run_scope[0],
+        last_run_scope[1],
+        mode_name=preview_options.mode_name,
+        sources_key=build_sources_key(preview_options),
+    )
+    if last_success:
+        effective_days_preview, _ = resolve_incremental_days_back(conn, last_run_scope[0], last_run_scope[1], preview_options)
+        st.caption(
+            f"Last run: {last_success.get('finished_at') or last_success.get('started_at')} | "
+            f"Next window: last {effective_days_preview} day(s)"
+        )
+    else:
+        st.caption("Last run: none for current scope/sources.")
+
 can_run = bool(search_query.strip()) if search_mode else bool(selected_group)
 if st.button("Run", type="primary", disabled=(not can_run or not any_source_selected)):
     with st.spinner("Running ingestion and ranking..."):
@@ -338,8 +566,11 @@ if st.button("Run", type="primary", disabled=(not can_run or not any_source_sele
             include_journal_rss=include_journal_rss,
             include_fda_approvals=include_fda_approvals,
             enrich_citations=enrich_citations and not fast_mode,
+            enable_semantic_scholar=enable_semantic_scholar and enrich_citations and not fast_mode,
             phase_2_3_only=False,
             rct_meta_only=False,
+            incremental_cap_days=days_back,
+            force_full_refresh=force_full_refresh,
         )
         if "max_run_seconds" in inspect.signature(RunOptions).parameters:
             run_options_kwargs["max_run_seconds"] = limits["max_run_seconds"]
@@ -452,14 +683,53 @@ recent_paper_items = _result_filter(recent_paper_items, result_phase_only, resul
 recent_trial_items = _result_filter(recent_trial_items, result_phase_only, result_rct_meta_only)
 
 
-t1, t2 = st.tabs(["New & Most Cited", "Trials"])
+t0, t1, t2, t3 = st.tabs(["Top 7", "New & Most Cited", "Trials", "Table"])
+with t0:
+    if st.session_state.get("has_run_once", False):
+        top_priority = st.selectbox(
+            "Top 7 priority",
+            ["Balanced", "Papers first", "Trials first"],
+            index=0,
+            key="top_priority",
+        )
+        top_n = st.slider("Top N (quick review)", min_value=3, max_value=15, value=7, step=1, key="top_n")
+        if top_priority == "Papers first":
+            source_rank = lambda x: 1 if x.get("source") in trial_sources else 0
+        elif top_priority == "Trials first":
+            source_rank = lambda x: 0 if x.get("source") in trial_sources else 1
+        else:
+            source_rank = lambda x: 0
+        def top_sort_key(x: dict) -> tuple:
+            dt = _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)
+            # Keep relevance order descending inside each priority bucket.
+            return (
+                source_rank(x),
+                -(x.get("score") or 0),
+                -(x.get("citations") or 0),
+                -dt.timestamp(),
+            )
+        top_items = sorted(
+            recent_paper_items + recent_trial_items,
+            key=top_sort_key,
+        )[:top_n]
+        if not top_items:
+            st.info("No items found for Top 7 in the selected window and filters.")
+        for item in top_items:
+            render_top_card(item)
+
 with t1:
     if st.session_state.get("has_run_once", False):
-        new_sort = st.selectbox("Sort (New & Most Cited)", ["Newest", "Highest score", "Most cited"], key="sort_new")
+        new_sort = st.selectbox("Sort (New & Most Cited)", ["Newest", "Highest score", "Most cited", "Hot"], key="sort_new")
         if new_sort == "Most cited":
             new_items = sorted(
                 recent_paper_items,
                 key=lambda x: (x.get("citations") or 0, x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
+                reverse=True,
+            )
+        elif new_sort == "Hot":
+            new_items = sorted(
+                recent_paper_items,
+                key=lambda x: (hot_score(x), x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
                 reverse=True,
             )
         elif new_sort == "Highest score":
@@ -481,11 +751,17 @@ with t1:
 
 with t2:
     if st.session_state.get("has_run_once", False):
-        trial_sort = st.selectbox("Sort (Trials)", ["Most recently updated", "Highest score", "Most cited"], key="sort_trials")
+        trial_sort = st.selectbox("Sort (Trials)", ["Most recently updated", "Highest score", "Most cited", "Hot"], key="sort_trials")
         if trial_sort == "Highest score":
             trial_items_sorted = sorted(
                 recent_trial_items,
                 key=lambda x: (x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
+                reverse=True,
+            )
+        elif trial_sort == "Hot":
+            trial_items_sorted = sorted(
+                recent_trial_items,
+                key=lambda x: (hot_score(x), x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
                 reverse=True,
             )
         elif trial_sort == "Most cited":
@@ -504,3 +780,33 @@ with t2:
             st.info("No trial updates found in the selected time window.")
         for item in trial_items_sorted[:100]:
             render_card(item, panel="trials")
+
+with t3:
+    if st.session_state.get("has_run_once", False):
+        table_scope = st.selectbox(
+            "Table scope",
+            ["All results", "Papers only", "Trials only"],
+            index=0,
+            key="table_scope",
+        )
+        if table_scope == "Papers only":
+            table_items = recent_paper_items
+        elif table_scope == "Trials only":
+            table_items = recent_trial_items
+        else:
+            table_items = recent_paper_items + recent_trial_items
+
+        rows = [_table_row(i) for i in table_items]
+        if not rows:
+            st.info("No rows available for the current filters/time window.")
+        else:
+            st.caption("Sortable researcher view. Values are best-effort extraction; unknowns are expected.")
+            csv_text = _rows_to_csv(rows)
+            st.download_button(
+                "Download CSV",
+                data=csv_text,
+                file_name=f"oncopulse_table_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_table_csv",
+            )
+            st.dataframe(rows, use_container_width=True, hide_index=True)

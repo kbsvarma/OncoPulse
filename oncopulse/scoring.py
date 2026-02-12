@@ -1,14 +1,32 @@
 import json
+from datetime import datetime, timezone
 import math
 import re
 from typing import Any
 
 
+DEFAULT_WEIGHTS: dict[str, float] = {
+    "phase_iii": 6,
+    "randomized": 5,
+    "meta_analysis": 4,
+    "phase_ii": 3,
+    "overall_survival": 2,
+    "progression_free_survival": 2,
+    "sample_size": 1,
+    "major_journal": 1,
+    "citations_multiplier": 1.0,
+    "preclinical_penalty": -4,
+    "case_report_penalty": -3,
+    "global_penalty": -2,
+    "include_term": 1,
+    "exclude_term": -1,
+}
+
 BOOSTS = [
-    (6, ["phase iii", "phase 3"]),
-    (5, ["randomized", "rct"]),
-    (4, ["meta-analysis", "systematic review"]),
-    (3, ["phase ii", "phase 2"]),
+    ("phase_iii", ["phase iii", "phase 3"]),
+    ("randomized", ["randomized", "rct"]),
+    ("meta_analysis", ["meta-analysis", "systematic review"]),
+    ("phase_ii", ["phase ii", "phase 2"]),
 ]
 
 
@@ -23,48 +41,113 @@ def _sample_size_boost(text: str) -> bool:
     return any(v >= 200 for v in values)
 
 
-def score_item(item: dict[str, Any], pack_rules: dict[str, Any]) -> tuple[int, list[str]]:
+def _resolved_weights(overrides: dict[str, float] | None) -> dict[str, float]:
+    weights = dict(DEFAULT_WEIGHTS)
+    if overrides:
+        for k, v in overrides.items():
+            if k in weights:
+                try:
+                    weights[k] = float(v)
+                except (TypeError, ValueError):
+                    continue
+    return weights
+
+
+def _parse_pub_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y-%m", "%Y"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def citations_per_year(item: dict[str, Any], now: datetime | None = None) -> float | None:
+    citations = item.get("citations")
+    if not isinstance(citations, int) or citations < 0:
+        return None
+    dt = _parse_pub_date(item.get("published_at") or item.get("updated_at"))
+    if not dt:
+        return None
+    ref = now or datetime.now(timezone.utc)
+    age_years = max((ref - dt).total_seconds() / (365.25 * 86400.0), 1 / 12.0)
+    return round(citations / age_years, 2)
+
+
+def hot_score(item: dict[str, Any], now: datetime | None = None) -> float:
+    # Blend recency with citation momentum so very old highly-cited papers don't always dominate.
+    dt = _parse_pub_date(item.get("published_at") or item.get("updated_at"))
+    ref = now or datetime.now(timezone.utc)
+    age_days = (ref - dt).days if dt else 3650
+    recency_component = 1.0 / (1.0 + max(age_days, 0) / 30.0)
+    citation_rate = citations_per_year(item, now=ref) or 0.0
+    return round(0.55 * math.log1p(max(citation_rate, 0.0)) + 0.45 * recency_component, 4)
+
+
+def score_item(
+    item: dict[str, Any],
+    pack_rules: dict[str, Any],
+    weight_overrides: dict[str, float] | None = None,
+) -> tuple[int, list[str]]:
     title = (item.get("title") or "").lower()
     text = (item.get("abstract_or_text") or "").lower()
     venue = (item.get("venue") or "").lower()
     blob = " ".join([title, text])
+    w = _resolved_weights(weight_overrides)
 
     score = 0
     explain: list[str] = []
 
-    for points, terms in BOOSTS:
+    for weight_key, terms in BOOSTS:
         if _has_any(blob, terms):
+            points = int(w[weight_key])
             score += points
             explain.append(f"+{points} {terms[0]}")
 
     if _has_any(blob, ["overall survival", " os "]):
-        score += 2
-        explain.append("+2 overall survival")
+        points = int(w["overall_survival"])
+        score += points
+        explain.append(f"+{points} overall survival")
 
     if _has_any(blob, ["progression-free survival", " pfs "]):
-        score += 2
-        explain.append("+2 progression-free survival")
+        points = int(w["progression_free_survival"])
+        score += points
+        explain.append(f"+{points} progression-free survival")
 
     if _sample_size_boost(blob):
-        score += 1
-        explain.append("+1 sample size >=200")
+        points = int(w["sample_size"])
+        score += points
+        explain.append(f"+{points} sample size >=200")
 
     journals = [j.lower() for j in pack_rules.get("major_journals", [])]
     if any(j in venue for j in journals):
-        score += 1
-        explain.append("+1 major journal")
+        points = int(w["major_journal"])
+        score += points
+        explain.append(f"+{points} major journal")
 
     citations = item.get("citations")
     if isinstance(citations, int) and citations >= 0:
-        c_bonus = int(math.log1p(citations))
+        c_bonus = int(math.log1p(citations) * float(w["citations_multiplier"]))
         if c_bonus > 0:
             score += c_bonus
             explain.append(f"+{c_bonus} citations bonus")
 
     penalties = [
-        (-4, ["mouse", "murine", "cell line", "in vitro"], "preclinical signal"),
-        (-3, ["case report"], "case report"),
-        (-2, pack_rules.get("global_penalty_terms", []), "global penalty"),
+        (int(w["preclinical_penalty"]), ["mouse", "murine", "cell line", "in vitro"], "preclinical signal"),
+        (int(w["case_report_penalty"]), ["case report"], "case report"),
+        (int(w["global_penalty"]), pack_rules.get("global_penalty_terms", []), "global penalty"),
     ]
     for p, terms, label in penalties:
         if terms and _has_any(blob, [t.lower() for t in terms]):
@@ -73,19 +156,25 @@ def score_item(item: dict[str, Any], pack_rules: dict[str, Any]) -> tuple[int, l
 
     for term in pack_rules.get("include_terms", []):
         if term.lower() in blob:
-            score += 1
-            explain.append(f"+1 include term: {term}")
+            points = int(w["include_term"])
+            score += points
+            explain.append(f"+{points} include term: {term}")
 
     for term in pack_rules.get("exclude_terms", []):
         if term.lower() in blob:
-            score -= 1
-            explain.append(f"-1 exclude term: {term}")
+            points = int(w["exclude_term"])
+            score += points
+            explain.append(f"{points} exclude term: {term}")
 
     return score, explain
 
 
-def score_and_attach(item: dict[str, Any], pack_rules: dict[str, Any]) -> dict[str, Any]:
-    score, explain = score_item(item, pack_rules)
+def score_and_attach(
+    item: dict[str, Any],
+    pack_rules: dict[str, Any],
+    weight_overrides: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    score, explain = score_item(item, pack_rules, weight_overrides=weight_overrides)
     item["score"] = score
     item["score_explain"] = explain
     item["score_explain_json"] = json.dumps(explain)

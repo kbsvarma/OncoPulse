@@ -2,6 +2,20 @@ import re
 from typing import Any
 from .text_utils import clean_text
 
+NO_INFO_WHY_IT_MATTERS = "Why it matters: Not enough info in abstract."
+BANNED_PRESCRIPTIVE_PHRASES = [
+    "should use",
+    "preferred regimen",
+    "must use",
+    "recommend using",
+    "first-line choice",
+    "best treatment",
+]
+
+
+def _has_numeric(text: str) -> bool:
+    return bool(re.search(r"\b\d+(?:\.\d+)?%?\b", text))
+
 
 def _detect_study_type(text: str) -> str:
     t = text.lower()
@@ -26,17 +40,27 @@ def _extract_population(text: str) -> str:
     for pattern in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
-            return m.group(1).strip()
+            candidate = m.group(1).strip()
+            # Trust mode guardrail: omit numeric population claims unless explicitly validated elsewhere.
+            if _has_numeric(candidate):
+                return "Not stated"
+            return candidate
     return "Not stated"
 
 
 def _extract_intervention(text: str) -> str:
     m = re.search(r"([^.]{0,120}(?:compared with|versus|vs\.?)[^.]{0,120}\.)", text, re.IGNORECASE)
     if m:
-        return m.group(1).strip()
+        candidate = m.group(1).strip()
+        if _has_numeric(candidate):
+            return "Not stated"
+        return candidate
     m2 = re.search(r"(received[^.]{0,140}\.)", text, re.IGNORECASE)
     if m2:
-        return m2.group(1).strip()
+        candidate = m2.group(1).strip()
+        if _has_numeric(candidate):
+            return "Not stated"
+        return candidate
     return "Not stated"
 
 
@@ -65,7 +89,10 @@ def _extract_key_finding(text: str) -> str:
     for s in sentences:
         ls = s.lower()
         if any(c in ls for c in cues):
-            return s.strip()
+            candidate = s.strip()
+            if _has_numeric(candidate):
+                return "Not explicitly stated in provided text"
+            return candidate
     return "Not explicitly stated in provided text"
 
 
@@ -84,6 +111,53 @@ def _clean_sentences(text: str, max_sentences: int = 3) -> list[str]:
     return cleaned
 
 
+def _has_safety_signal(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in ["toxicity", "adverse event", "adverse events", "pneumonitis", "safety"])
+
+
+def _sanitize_why_text(text: str) -> str:
+    out = text
+    for phrase in BANNED_PRESCRIPTIVE_PHRASES:
+        out = re.sub(re.escape(phrase), " ", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
+def _build_why_it_matters(
+    item: dict[str, Any],
+    study: str,
+    endpoints: str,
+    population: str,
+    key_finding: str,
+    text: str,
+) -> str:
+    signals: list[str] = []
+    if study != "Not stated":
+        signals.append(f"Study signal: {study.lower()}.")
+    if endpoints != "Not stated":
+        signals.append(f"Reported endpoints include {endpoints}.")
+    if population != "Not stated":
+        signals.append("Population is described in the abstract.")
+    status = clean_text(item.get("status"))
+    if status:
+        signals.append(f"Trial status update: {status}.")
+    if _has_safety_signal(text):
+        signals.append("Safety-related language is present and may affect monitoring context.")
+    if key_finding not in {"Not explicitly stated in provided text", "Key finding: No abstract available"}:
+        signals.append("The abstract reports a directional result that may guide evidence tracking.")
+
+    if not signals:
+        return NO_INFO_WHY_IT_MATTERS
+
+    # Keep concise and non-prescriptive: 1-2 short lines.
+    why = "Why it matters: " + " ".join(signals[:2])
+    why = _sanitize_why_text(why)
+    if not why.strip() or why.strip().lower() == "why it matters:":
+        return NO_INFO_WHY_IT_MATTERS
+    return why
+
+
 def summarize_item(item: dict[str, Any]) -> str:
     text = clean_text(item.get("abstract_or_text"))
     if not text:
@@ -93,7 +167,7 @@ def summarize_item(item: dict[str, Any]) -> str:
             "Intervention vs comparator: Not stated\n"
             "Endpoints mentioned: Not stated\n"
             "Key finding: No abstract available\n"
-            "Why it matters: Evidence signal exists, but source text is insufficient for interpretation."
+            f"{NO_INFO_WHY_IT_MATTERS}"
         )
 
     study = _detect_study_type(text)
@@ -101,11 +175,12 @@ def summarize_item(item: dict[str, Any]) -> str:
     intervention = _extract_intervention(text)
     endpoints = _extract_endpoints(text)
     key = _extract_key_finding(text)
+    why = _build_why_it_matters(item, study, endpoints, pop, key, text)
     return (
         f"Study type / phase: {study}\n"
         f"Population: {pop}\n"
         f"Intervention vs comparator: {intervention}\n"
         f"Endpoints mentioned: {endpoints}\n"
         f"Key finding: {key}\n"
-        "Why it matters: This may inform current evidence awareness; clinical action requires full-text and guideline context."
+        f"{why}"
     )

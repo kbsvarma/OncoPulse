@@ -3,6 +3,7 @@ pyproject.toml
 oncopulse/__init__.py
 oncopulse/config.py
 oncopulse/db.py
+oncopulse/extract_fields.py
 oncopulse/models.py
 oncopulse/packs.py
 oncopulse/scoring.py
@@ -22,10 +23,15 @@ oncopulse/ingest/openalex.py
 oncopulse/ingest/preprints.py
 oncopulse/ingest/pubmed.py
 oncopulse/ingest/rss_feeds.py
+oncopulse/ingest/semanticscholar.py
 oncopulse/ingest/source_extract.py
 oncopulse/services/__init__.py
 oncopulse/services/run_pipeline.py
 tests/test_connectors.py
 tests/test_dedup.py
+tests/test_extract_fields.py
+tests/test_incremental_runs.py
+tests/test_mode_persistence.py
 tests/test_pubmed_parse.py
 tests/test_scoring.py
+tests/test_summarize.py

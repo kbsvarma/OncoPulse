@@ -17,6 +17,8 @@ EUROPE_PMC_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 BIORXIV_BASE = "https://api.biorxiv.org"
 MEDRXIV_BASE = "https://api.medrxiv.org"
 FDA_DRUGS_BASE = "https://api.fda.gov/drug/drugsfda.json"
+SEMANTIC_SCHOLAR_BASE = "https://api.semanticscholar.org/graph/v1/paper"
+SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
 
 JOURNAL_RSS_FEEDS = [
     "https://www.nejm.org/rss/current.xml",

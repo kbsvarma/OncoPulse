@@ -1,13 +1,112 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import math
 import time
 from typing import Any
 
 from .. import db, packs, scoring, summarize
-from ..ingest import clinicaltrials, dedup, europepmc, fda, openalex, preprints, pubmed, rss_feeds
+from ..ingest import clinicaltrials, dedup, europepmc, fda, openalex, preprints, pubmed, rss_feeds, semanticscholar
+
+MODE_CLINICIAN = "Clinician (Practice-changing)"
+MODE_SAFETY_WATCH = "Safety Watch"
+MODE_TRIAL_RADAR = "Trial Radar"
+MODE_RESEARCHER = "Researcher"
+MODE_FELLOW = "Fellow"
+
+MODE_OPTIONS = [
+    MODE_CLINICIAN,
+    MODE_SAFETY_WATCH,
+    MODE_TRIAL_RADAR,
+    MODE_RESEARCHER,
+    MODE_FELLOW,
+]
+
+MODE_PRESETS: dict[str, dict[str, Any]] = {
+    MODE_CLINICIAN: {
+        "include_papers": True,
+        "include_trials": True,
+        "include_preprints": False,
+        "include_journal_rss": False,
+        "include_fda_approvals": True,
+        "phase_2_3_only": True,
+        "rct_meta_only": True,
+        "scoring_weights": {
+            "phase_iii": 10,
+            "randomized": 8,
+            "overall_survival": 5,
+            "progression_free_survival": 4,
+            "meta_analysis": 5,
+        },
+    },
+    MODE_SAFETY_WATCH: {
+        "include_papers": True,
+        "include_trials": True,
+        "include_preprints": False,
+        "include_journal_rss": True,
+        "include_fda_approvals": True,
+        "phase_2_3_only": False,
+        "rct_meta_only": False,
+        "scoring_weights": {
+            "meta_analysis": 6,
+            "phase_iii": 6,
+            "randomized": 5,
+            "overall_survival": 2,
+            "progression_free_survival": 2,
+        },
+    },
+    MODE_TRIAL_RADAR: {
+        "include_papers": False,
+        "include_trials": True,
+        "include_preprints": False,
+        "include_journal_rss": False,
+        "include_fda_approvals": True,
+        "phase_2_3_only": False,
+        "rct_meta_only": False,
+        "scoring_weights": {
+            "phase_iii": 8,
+            "phase_ii": 5,
+            "randomized": 6,
+            "overall_survival": 3,
+            "progression_free_survival": 3,
+        },
+    },
+    MODE_RESEARCHER: {
+        "include_papers": True,
+        "include_trials": True,
+        "include_preprints": True,
+        "include_journal_rss": True,
+        "include_fda_approvals": False,
+        "phase_2_3_only": False,
+        "rct_meta_only": False,
+        "scoring_weights": {
+            "meta_analysis": 5,
+            "phase_iii": 6,
+            "phase_ii": 4,
+            "citations_multiplier": 1.5,
+        },
+    },
+    MODE_FELLOW: {
+        "include_papers": True,
+        "include_trials": True,
+        "include_preprints": True,
+        "include_journal_rss": False,
+        "include_fda_approvals": False,
+        "phase_2_3_only": False,
+        "rct_meta_only": False,
+        "scoring_weights": {
+            "phase_iii": 7,
+            "randomized": 6,
+            "meta_analysis": 5,
+            "sample_size": 2,
+            "citations_multiplier": 1.2,
+        },
+    },
+}
 
 
 @dataclass
 class RunOptions:
+    mode_name: str = MODE_CLINICIAN
     days_back: int = 14
     retmax_pubmed: int = 200
     trials_limit: int = 100
@@ -24,6 +123,14 @@ class RunOptions:
     phase_2_3_only: bool = False
     rct_meta_only: bool = False
     max_run_seconds: int = 45
+    scoring_weights: dict[str, float] | None = None
+    incremental_cap_days: int = 30
+    force_full_refresh: bool = False
+    enable_semantic_scholar: bool = False
+
+
+def get_mode_preset(mode_name: str) -> dict[str, Any]:
+    return dict(MODE_PRESETS.get(mode_name, MODE_PRESETS[MODE_CLINICIAN]))
 
 
 def _apply_filters(items: list[dict[str, Any]], options: RunOptions) -> list[dict[str, Any]]:
@@ -62,11 +169,67 @@ def _query_key(query: str) -> str:
     return f"query:{query.strip().lower()[:180]}"
 
 
+def build_sources_key(options: RunOptions) -> str:
+    enabled: list[str] = []
+    if options.include_papers:
+        enabled.append("papers")
+    if options.include_trials:
+        enabled.append("trials")
+    if options.include_preprints:
+        enabled.append("preprints")
+    if options.include_journal_rss:
+        enabled.append("rss")
+    if options.include_fda_approvals:
+        enabled.append("fda")
+    return ",".join(enabled) if enabled else "none"
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def resolve_incremental_days_back(
+    conn,
+    specialty: str,
+    subcategory: str,
+    options: RunOptions,
+) -> tuple[int, dict[str, Any] | None]:
+    if options.force_full_refresh:
+        return max(1, int(options.days_back)), None
+
+    last_success = db.get_last_successful_run(
+        conn,
+        specialty,
+        subcategory,
+        mode_name=options.mode_name,
+        sources_key=build_sources_key(options),
+    )
+    if not last_success:
+        return max(1, int(options.days_back)), None
+
+    finished = _parse_iso_utc(last_success.get("finished_at")) or _parse_iso_utc(last_success.get("started_at"))
+    if not finished:
+        return max(1, int(options.days_back)), last_success
+
+    elapsed_days = max(1, math.ceil((datetime.now(timezone.utc) - finished).total_seconds() / 86400.0))
+    cap_days = max(1, int(options.incremental_cap_days))
+    return min(max(1, int(options.days_back)), cap_days, elapsed_days), last_success
+
+
 def _ingest_for_query(
     specialty: str,
     subcategory: str,
     paper_query: str,
     trial_query: str,
+    days_back: int,
     options: RunOptions,
     check_timeout,
 ) -> list[dict[str, Any]]:
@@ -75,7 +238,7 @@ def _ingest_for_query(
     if options.include_papers:
         check_timeout()
         try:
-            pmids = pubmed.search(paper_query, days_back=options.days_back, retmax=options.retmax_pubmed)
+            pmids = pubmed.search(paper_query, days_back=days_back, retmax=options.retmax_pubmed)
             papers = pubmed.fetch(pmids)
         except Exception:  # noqa: BLE001
             papers = []
@@ -88,7 +251,7 @@ def _ingest_for_query(
         try:
             epmc_papers = europepmc.search(
                 paper_query,
-                days_back=options.days_back,
+                days_back=days_back,
                 limit=options.europepmc_limit,
                 preprint_only=False,
             )
@@ -113,7 +276,7 @@ def _ingest_for_query(
     if options.include_preprints:
         check_timeout()
         try:
-            preprint_items = preprints.search(paper_query, days_back=options.days_back, limit=options.preprint_limit)
+            preprint_items = preprints.search(paper_query, days_back=days_back, limit=options.preprint_limit)
         except Exception:  # noqa: BLE001
             preprint_items = []
         for p in preprint_items:
@@ -125,7 +288,7 @@ def _ingest_for_query(
         try:
             epmc_preprints = europepmc.search(
                 paper_query,
-                days_back=options.days_back,
+                days_back=days_back,
                 limit=options.preprint_limit,
                 preprint_only=True,
             )
@@ -150,7 +313,7 @@ def _ingest_for_query(
     if options.include_fda_approvals:
         check_timeout()
         try:
-            fda_items = fda.search(trial_query, days_back=options.days_back, limit=options.fda_limit)
+            fda_items = fda.search(trial_query, days_back=days_back, limit=options.fda_limit)
         except Exception:  # noqa: BLE001
             fda_items = []
         for f in fda_items:
@@ -172,32 +335,6 @@ def _finalize_items(
     filtered = _apply_filters(ingested, options)
     unique = dedup.deduplicate(filtered)
 
-    # Backfill missing abstracts when PMID exists (common for some Europe PMC entries).
-    missing_pmids = sorted(
-        {
-            str(i.get("pmid")).strip()
-            for i in unique
-            if i.get("pmid") and not (i.get("abstract_or_text") or "").strip()
-        }
-    )
-    if missing_pmids:
-        try:
-            check_timeout()
-            pmid_records = pubmed.fetch(missing_pmids[:200])
-            abstract_by_pmid = {
-                (r.get("pmid") or "").strip(): (r.get("abstract_or_text") or "").strip()
-                for r in pmid_records
-                if (r.get("pmid") or "").strip()
-            }
-            for item in unique:
-                pmid = (item.get("pmid") or "").strip()
-                if pmid and not (item.get("abstract_or_text") or "").strip():
-                    candidate = abstract_by_pmid.get(pmid, "")
-                    if candidate:
-                        item["abstract_or_text"] = candidate
-        except Exception:  # noqa: BLE001
-            pass
-
     persisted = 0
     timed_out = False
     for item in unique:
@@ -208,14 +345,22 @@ def _finalize_items(
             break
 
         item["fingerprint"] = dedup.fingerprint_item(item)
+        item["mode_name"] = options.mode_name
         if options.enrich_citations:
-            item["citations"] = openalex.get_citations(conn, item.get("doi"))
-            item["citations_source"] = "openalex" if item.get("citations") is not None else None
+            if item.get("doi"):
+                item["citations"] = openalex.get_citations(conn, item.get("doi"))
+                item["citations_source"] = "openalex" if item.get("citations") is not None else None
+            elif options.enable_semantic_scholar:
+                item["citations"] = semanticscholar.get_citations_by_pmid(item.get("pmid"))
+                item["citations_source"] = "semanticscholar" if item.get("citations") is not None else None
+            else:
+                item["citations"] = None
+                item["citations_source"] = None
         else:
             item["citations"] = None
             item["citations_source"] = None
 
-        scoring.score_and_attach(item, rules)
+        scoring.score_and_attach(item, rules, weight_overrides=options.scoring_weights)
         item["summary_text"] = summarize.summarize_item(item)
         db.upsert_item(conn, item)
         persisted += 1
@@ -232,7 +377,16 @@ def _finalize_items(
 
 
 def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) -> dict[str, Any]:
-    run_id = db.create_run(conn, specialty, subcategory)
+    effective_days_back, _ = resolve_incremental_days_back(conn, specialty, subcategory, options)
+    run_id = db.create_run(
+        conn,
+        specialty,
+        subcategory,
+        mode_name=options.mode_name,
+        sources_key=build_sources_key(options),
+        resolved_days_back=effective_days_back,
+        force_full_refresh=options.force_full_refresh,
+    )
     started = time.monotonic()
 
     def _check_timeout() -> None:
@@ -247,10 +401,14 @@ def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) ->
             subcategory,
             rules["pubmed_query"],
             rules["trials_query"],
+            effective_days_back,
             options,
             _check_timeout,
         )
-        return _finalize_items(conn, run_id, ingested, rules, options, _check_timeout)
+        result = _finalize_items(conn, run_id, ingested, rules, options, _check_timeout)
+        result["effective_days_back"] = effective_days_back
+        result["incremental"] = not options.force_full_refresh
+        return result
     except TimeoutError as exc:
         db.finish_run(conn, run_id, "timeout", len(ingested), 0, str(exc))
         return {
@@ -259,6 +417,8 @@ def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) ->
             "ingested_count": len(ingested),
             "deduped_count": 0,
             "timed_out": True,
+            "effective_days_back": effective_days_back,
+            "incremental": not options.force_full_refresh,
         }
     except Exception as exc:  # noqa: BLE001
         db.finish_run(conn, run_id, "failed", len(ingested), 0, str(exc))
@@ -278,9 +438,18 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
 
     specialty = "search"
     subcategory = _query_key(query_text)
+    effective_days_back, _ = resolve_incremental_days_back(conn, specialty, subcategory, options)
     # Search mode is always source-driven: clear previous cached records for this query scope.
     db.clear_scope_items(conn, specialty, subcategory)
-    run_id = db.create_run(conn, specialty, subcategory)
+    run_id = db.create_run(
+        conn,
+        specialty,
+        subcategory,
+        mode_name=options.mode_name,
+        sources_key=build_sources_key(options),
+        resolved_days_back=effective_days_back,
+        force_full_refresh=options.force_full_refresh,
+    )
     started = time.monotonic()
 
     def _check_timeout() -> None:
@@ -294,10 +463,14 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             subcategory,
             query_text,
             query_text,
+            effective_days_back,
             options,
             _check_timeout,
         )
-        return _finalize_items(conn, run_id, ingested, _default_rules(), options, _check_timeout)
+        result = _finalize_items(conn, run_id, ingested, _default_rules(), options, _check_timeout)
+        result["effective_days_back"] = effective_days_back
+        result["incremental"] = not options.force_full_refresh
+        return result
     except TimeoutError as exc:
         db.finish_run(conn, run_id, "timeout", len(ingested), 0, str(exc))
         return {
@@ -306,6 +479,8 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             "ingested_count": len(ingested),
             "deduped_count": 0,
             "timed_out": True,
+            "effective_days_back": effective_days_back,
+            "incremental": not options.force_full_refresh,
         }
     except Exception as exc:  # noqa: BLE001
         db.finish_run(conn, run_id, "failed", len(ingested), 0, str(exc))

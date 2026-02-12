@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   specialty TEXT NOT NULL,
   subcategory TEXT NOT NULL,
+  mode_name TEXT,
   source TEXT NOT NULL,
   title TEXT NOT NULL,
   url TEXT,
@@ -60,6 +61,10 @@ CREATE TABLE IF NOT EXISTS run_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   specialty TEXT NOT NULL,
   subcategory TEXT NOT NULL,
+  mode_name TEXT,
+  sources_key TEXT,
+  resolved_days_back INTEGER,
+  force_full_refresh INTEGER DEFAULT 0,
   started_at TEXT NOT NULL,
   finished_at TEXT,
   status TEXT NOT NULL,
@@ -88,6 +93,18 @@ def _now_iso_utc() -> str:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()}
+    if "mode_name" not in columns:
+        conn.execute("ALTER TABLE items ADD COLUMN mode_name TEXT")
+    run_cols = {row["name"] for row in conn.execute("PRAGMA table_info(run_history)").fetchall()}
+    if "mode_name" not in run_cols:
+        conn.execute("ALTER TABLE run_history ADD COLUMN mode_name TEXT")
+    if "sources_key" not in run_cols:
+        conn.execute("ALTER TABLE run_history ADD COLUMN sources_key TEXT")
+    if "resolved_days_back" not in run_cols:
+        conn.execute("ALTER TABLE run_history ADD COLUMN resolved_days_back INTEGER")
+    if "force_full_refresh" not in run_cols:
+        conn.execute("ALTER TABLE run_history ADD COLUMN force_full_refresh INTEGER DEFAULT 0")
     conn.commit()
 
 
@@ -96,6 +113,7 @@ def upsert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
     payload = {
         "specialty": item.get("specialty", ""),
         "subcategory": item.get("subcategory", ""),
+        "mode_name": item.get("mode_name"),
         "source": item.get("source", ""),
         "title": item.get("title", ""),
         "url": item.get("url"),
@@ -118,13 +136,13 @@ def upsert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
     conn.execute(
         """
         INSERT INTO items (
-          specialty, subcategory, source, title, url, published_at, updated_at,
+          specialty, subcategory, mode_name, source, title, url, published_at, updated_at,
           pmid, doi, nct_id, venue, authors, abstract_or_text,
           score, score_explain_json, summary_text,
           citations, citations_source, fingerprint,
           created_at, last_seen_at
         ) VALUES (
-          :specialty, :subcategory, :source, :title, :url, :published_at, :updated_at,
+          :specialty, :subcategory, :mode_name, :source, :title, :url, :published_at, :updated_at,
           :pmid, :doi, :nct_id, :venue, :authors, :abstract_or_text,
           :score, :score_explain_json, :summary_text,
           :citations, :citations_source, :fingerprint,
@@ -133,6 +151,7 @@ def upsert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
         ON CONFLICT(fingerprint) DO UPDATE SET
           specialty=excluded.specialty,
           subcategory=excluded.subcategory,
+          mode_name=excluded.mode_name,
           source=excluded.source,
           title=excluded.title,
           url=excluded.url,
@@ -185,15 +204,6 @@ def clear_all_local_cache(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM citation_cache")
     conn.execute("DELETE FROM run_history")
     conn.execute("DELETE FROM topics")
-    conn.commit()
-
-
-def update_item_text_fields(conn: sqlite3.Connection, item_id: int, abstract_text: str, summary_text: str) -> None:
-    now = _now_iso_utc()
-    conn.execute(
-        "UPDATE items SET abstract_or_text = ?, summary_text = ?, last_seen_at = ? WHERE id = ?",
-        (abstract_text, summary_text, now, item_id),
-    )
     conn.commit()
 
 
@@ -254,14 +264,59 @@ def set_cached_citation(conn: sqlite3.Connection, doi: str, cited_by_count: Opti
     conn.commit()
 
 
-def create_run(conn: sqlite3.Connection, specialty: str, subcategory: str) -> int:
+def create_run(
+    conn: sqlite3.Connection,
+    specialty: str,
+    subcategory: str,
+    mode_name: Optional[str] = None,
+    sources_key: Optional[str] = None,
+    resolved_days_back: Optional[int] = None,
+    force_full_refresh: bool = False,
+) -> int:
     now = _now_iso_utc()
     cur = conn.execute(
-        "INSERT INTO run_history (specialty, subcategory, started_at, status) VALUES (?, ?, ?, ?)",
-        (specialty, subcategory, now, "running"),
+        """
+        INSERT INTO run_history
+        (specialty, subcategory, mode_name, sources_key, resolved_days_back, force_full_refresh, started_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            specialty,
+            subcategory,
+            mode_name,
+            sources_key,
+            resolved_days_back,
+            1 if force_full_refresh else 0,
+            now,
+            "running",
+        ),
     )
     conn.commit()
     return int(cur.lastrowid)
+
+
+def get_last_successful_run(
+    conn: sqlite3.Connection,
+    specialty: str,
+    subcategory: str,
+    mode_name: Optional[str] = None,
+    sources_key: Optional[str] = None,
+) -> dict[str, Any] | None:
+    sql = """
+      SELECT *
+      FROM run_history
+      WHERE specialty = ? AND subcategory = ? AND status = 'success'
+    """
+    params: list[Any] = [specialty, subcategory]
+    if mode_name is not None:
+        sql += " AND mode_name = ?"
+        params.append(mode_name)
+    if sources_key is not None:
+        sql += " AND sources_key = ?"
+        params.append(sources_key)
+    sql += " ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    return dict(row) if row else None
 
 
 def finish_run(
