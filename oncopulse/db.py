@@ -81,6 +81,17 @@ CREATE TABLE IF NOT EXISTS custom_mode_profiles (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS full_text_cache (
+  cache_key TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  pmid TEXT,
+  doi TEXT,
+  pmcid TEXT,
+  xml_text TEXT,
+  sections_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_items_specialty_subcategory ON items(specialty, subcategory);
 CREATE INDEX IF NOT EXISTS idx_items_source ON items(source);
 CREATE INDEX IF NOT EXISTS idx_items_published_at ON items(published_at);
@@ -113,6 +124,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE run_history ADD COLUMN resolved_days_back INTEGER")
     if "force_full_refresh" not in run_cols:
         conn.execute("ALTER TABLE run_history ADD COLUMN force_full_refresh INTEGER DEFAULT 0")
+    item_cols = {row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()}
+    if "full_text_source" not in item_cols:
+        conn.execute("ALTER TABLE items ADD COLUMN full_text_source TEXT")
+    if "support_snippets_json" not in item_cols:
+        conn.execute("ALTER TABLE items ADD COLUMN support_snippets_json TEXT DEFAULT '[]'")
     conn.commit()
 
 
@@ -138,6 +154,8 @@ def upsert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
         "summary_text": item.get("summary_text"),
         "citations": item.get("citations"),
         "citations_source": item.get("citations_source"),
+        "full_text_source": item.get("full_text_source"),
+        "support_snippets_json": json.dumps(item.get("support_snippets", [])),
         "fingerprint": item.get("fingerprint"),
     }
 
@@ -147,13 +165,13 @@ def upsert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
           specialty, subcategory, mode_name, source, title, url, published_at, updated_at,
           pmid, doi, nct_id, venue, authors, abstract_or_text,
           score, score_explain_json, summary_text,
-          citations, citations_source, fingerprint,
+          citations, citations_source, full_text_source, support_snippets_json, fingerprint,
           created_at, last_seen_at
         ) VALUES (
           :specialty, :subcategory, :mode_name, :source, :title, :url, :published_at, :updated_at,
           :pmid, :doi, :nct_id, :venue, :authors, :abstract_or_text,
           :score, :score_explain_json, :summary_text,
-          :citations, :citations_source, :fingerprint,
+          :citations, :citations_source, :full_text_source, :support_snippets_json, :fingerprint,
           :created_at, :last_seen_at
         )
         ON CONFLICT(fingerprint) DO UPDATE SET
@@ -176,6 +194,8 @@ def upsert_item(conn: sqlite3.Connection, item: dict[str, Any]) -> int:
           summary_text=excluded.summary_text,
           citations=excluded.citations,
           citations_source=excluded.citations_source,
+          full_text_source=excluded.full_text_source,
+          support_snippets_json=excluded.support_snippets_json,
           last_seen_at=excluded.last_seen_at
         """,
         {**payload, "created_at": now, "last_seen_at": now},
@@ -213,6 +233,7 @@ def clear_all_local_cache(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM run_history")
     conn.execute("DELETE FROM topics")
     conn.execute("DELETE FROM custom_mode_profiles")
+    conn.execute("DELETE FROM full_text_cache")
     conn.commit()
 
 
@@ -269,6 +290,47 @@ def set_cached_citation(conn: sqlite3.Connection, doi: str, cited_by_count: Opti
     conn.execute(
         "INSERT INTO citation_cache (doi, cited_by_count, fetched_at) VALUES (?, ?, ?) ON CONFLICT(doi) DO UPDATE SET cited_by_count = excluded.cited_by_count, fetched_at = excluded.fetched_at",
         (doi.lower(), cited_by_count, now),
+    )
+    conn.commit()
+
+
+def get_cached_full_text(conn: sqlite3.Connection, cache_key: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM full_text_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    try:
+        out["sections"] = json.loads(out.get("sections_json") or "{}")
+    except Exception:
+        out["sections"] = {}
+    return out
+
+
+def set_cached_full_text(
+    conn: sqlite3.Connection,
+    cache_key: str,
+    source: str,
+    sections: dict[str, Any],
+    pmid: str | None = None,
+    doi: str | None = None,
+    pmcid: str | None = None,
+    xml_text: str | None = None,
+) -> None:
+    now = _now_iso_utc()
+    conn.execute(
+        """
+        INSERT INTO full_text_cache (cache_key, source, pmid, doi, pmcid, xml_text, sections_json, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(cache_key) DO UPDATE SET
+          source=excluded.source,
+          pmid=excluded.pmid,
+          doi=excluded.doi,
+          pmcid=excluded.pmcid,
+          xml_text=excluded.xml_text,
+          sections_json=excluded.sections_json,
+          fetched_at=excluded.fetched_at
+        """,
+        (cache_key, source, pmid, doi, pmcid, xml_text, json.dumps(sections), now),
     )
     conn.commit()
 

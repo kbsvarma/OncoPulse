@@ -40,6 +40,17 @@ with header_l:
     st.title("OncoPulse - Oncology Research Inbox")
 with header_r:
     with st.popover("Run settings"):
+        default_full_text = bool(get_mode_preset(st.session_state.get("selected_mode", MODE_ALL)).get("use_full_text_oa", False))
+        use_full_text_setting = st.toggle(
+            "Use full text when available (PMC/Europe PMC OA)",
+            value=bool(st.session_state.get("run_use_full_text_oa", default_full_text)),
+            key="run_use_full_text_oa",
+        )
+        llm_polish_summary = st.toggle(
+            "LLM polish summary (strict, citation-backed)",
+            value=False,
+            help="Optional readability rewrite with strict evidence/numeric guardrails.",
+        )
         fast_mode = st.toggle("Fast mode", value=True)
         enrich_citations = st.toggle("Enrich citations", value=False)
         enable_semantic_scholar = st.toggle(
@@ -97,6 +108,11 @@ with header_r:
                 rs_include_fda = st.checkbox("Include FDA approvals", value=bool(base_rs.get("include_fda_approvals", False)), key="rs_inc_fda")
                 rs_phase = st.checkbox("Phase II/III only", value=bool(base_rs.get("phase_2_3_only", False)), key="rs_phase")
                 rs_rct = st.checkbox("RCT/meta only", value=bool(base_rs.get("rct_meta_only", False)), key="rs_rct")
+                rs_use_full_text_oa = st.checkbox(
+                    "Use full text when available (PMC/Europe PMC OA)",
+                    value=bool(base_rs.get("use_full_text_oa", False)),
+                    key="rs_use_full_text_oa",
+                )
 
             sw_base = dict(base_rs.get("scoring_weights", {}))
             s1, s2, s3 = st.columns(3)
@@ -125,6 +141,7 @@ with header_r:
                         "include_fda_approvals": rs_include_fda,
                         "phase_2_3_only": rs_phase,
                         "rct_meta_only": rs_rct,
+                        "use_full_text_oa": rs_use_full_text_oa,
                         "scoring_weights": {
                             "phase_iii": rs_w_phase3,
                             "randomized": rs_w_rct,
@@ -209,6 +226,10 @@ def _query_key(query: str) -> str:
     return f"query:{query.strip().lower()[:180]}"
 
 
+def _refresh_results_view() -> None:
+    st.session_state["_results_refresh_nonce"] = time.time()
+
+
 def _parse_date(date_text: str | None) -> datetime | None:
     if not date_text:
         return None
@@ -287,6 +308,8 @@ def _evidence_badge_html(label: str) -> str:
 
 
 def _confidence_label(item: dict) -> str:
+    if item.get("full_text_source"):
+        return "Full-text"
     source = (item.get("source") or "").lower()
     has_text = bool(clean_text(item.get("abstract_or_text")))
     has_lit_id = bool(item.get("pmid") or item.get("doi"))
@@ -303,6 +326,7 @@ def _confidence_label(item: dict) -> str:
 
 def _confidence_badge_html(label: str) -> str:
     styles = {
+        "Full-text": ("#0c4a6e", "#e0f2fe"),
         "Abstract-only": ("#0f766e", "#ccfbf1"),
         "Registry-only": ("#1e3a8a", "#dbeafe"),
         "Mixed (abstract + registry)": ("#7c2d12", "#ffedd5"),
@@ -367,6 +391,22 @@ def _snippet_terms(explain: list[str]) -> list[str]:
 
 
 def _pick_source_snippets(item: dict, explain: list[str], max_snippets: int = 3) -> list[str]:
+    raw_snips = item.get("support_snippets_json")
+    if raw_snips:
+        try:
+            parsed = json.loads(raw_snips) if isinstance(raw_snips, str) else raw_snips
+            if isinstance(parsed, list):
+                cleaned = [clean_text(s) for s in parsed if clean_text(s)]
+                if cleaned:
+                    return cleaned[:max_snippets]
+        except Exception:
+            pass
+    support_snips = item.get("support_snippets")
+    if isinstance(support_snips, list):
+        cleaned = [clean_text(s) for s in support_snips if clean_text(s)]
+        if cleaned:
+            return cleaned[:max_snippets]
+
     text = clean_text(item.get("abstract_or_text"))
     if not text:
         return []
@@ -403,12 +443,35 @@ def _summary_field(summary_text: str, label: str) -> str:
     return "Not stated"
 
 
+def _full_text_badge_html(source: str | None) -> str:
+    if not source:
+        return ""
+    label = f"Full text: {source}"
+    return (
+        "<span style='display:inline-block;padding:4px 10px;margin:2px 0;border-radius:999px;"
+        "background:#164e63;color:#ecfeff;font-size:0.78rem;font-weight:600;'>"
+        f"{label}</span>"
+    )
+
+
 def _preview_sentences(text: str, max_sentences: int = 3) -> str:
     cleaned = clean_text(text)
     if not cleaned:
         return ""
     sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", cleaned) if s.strip()]
     return " ".join(sents[:max_sentences])
+
+
+def _summary_basis_text(item: dict) -> str:
+    if item.get("full_text_source"):
+        return f"Summary basis: Full text ({item.get('full_text_source')})"
+    source = (item.get("source") or "").lower()
+    has_abstract = bool(clean_text(item.get("abstract_or_text")))
+    if source in {"clinicaltrials", "fda"} and not has_abstract:
+        return "Summary basis: Registry record only"
+    if has_abstract:
+        return "Summary basis: Abstract only"
+    return "Summary basis: Not enough source text"
 
 
 def render_top_card(item: dict):
@@ -427,13 +490,22 @@ def render_top_card(item: dict):
     with st.container(border=True):
         evidence = _evidence_label(item)
         confidence = _confidence_label(item)
+        c_val = item.get("citations")
+        c_rate = citations_per_year(item)
+        c_text = f"{c_val}" if c_val is not None else "N/A"
+        if c_rate is not None:
+            c_text += f" ({c_rate}/yr)"
         st.markdown(f"### {item.get('title')}")
         st.caption(
             f"Date: {item.get('published_at') or item.get('updated_at') or 'N/A'} | "
-            f"Source: {item.get('source')}"
+            f"Source: {item.get('source')} | "
+            f"Score: {item.get('score', 0)} | "
+            f"Citations: {c_text}"
         )
         st.markdown(_evidence_badge_html(evidence), unsafe_allow_html=True)
         st.markdown(_confidence_badge_html(confidence), unsafe_allow_html=True)
+        if item.get("full_text_source"):
+            st.markdown(_full_text_badge_html(item.get("full_text_source")), unsafe_allow_html=True)
         if item.get("url"):
             st.markdown(f"[Open source link]({item['url']})")
 
@@ -444,6 +516,7 @@ def render_top_card(item: dict):
             )
             st.markdown(badge_html, unsafe_allow_html=True)
         st.caption("Why ranked: " + (", ".join(explain) if explain else "No rule matches"))
+        st.caption(_summary_basis_text(item))
         if abstract_preview:
             st.markdown(f"**Abstract preview:** {abstract_preview}")
         st.markdown(f"**Study type / phase:** {study_type}")
@@ -521,6 +594,8 @@ def render_card(item: dict, panel: str):
             st.caption(f"Citations: {c_text}")
         st.markdown(_evidence_badge_html(evidence), unsafe_allow_html=True)
         st.markdown(_confidence_badge_html(confidence), unsafe_allow_html=True)
+        if item.get("full_text_source"):
+            st.markdown(_full_text_badge_html(item.get("full_text_source")), unsafe_allow_html=True)
 
         st.caption(f"Venue: {item.get('venue') or 'N/A'}")
         st.caption(f"PMID: {item.get('pmid') or '-'} | DOI: {item.get('doi') or '-'} | NCT: {item.get('nct_id') or '-'}")
@@ -559,6 +634,7 @@ def render_card(item: dict, panel: str):
             st.write("No abstract available.")
 
         st.markdown("**Structured summary**")
+        st.caption(_summary_basis_text(item))
         st.markdown(_summary_to_markdown(clean_text(item.get("summary_text")) or "No summary"))
 
         if item.get("url"):
@@ -620,18 +696,22 @@ include_journal_rss = bool(mode_config.get("include_journal_rss", False))
 include_fda_approvals = bool(mode_config.get("include_fda_approvals", False))
 phase_2_3_only = bool(mode_config.get("phase_2_3_only", False))
 rct_meta_only = bool(mode_config.get("rct_meta_only", False))
+use_full_text_oa = bool(mode_config.get("use_full_text_oa", False))
+if "run_use_full_text_oa" in st.session_state:
+    use_full_text_oa = bool(st.session_state["run_use_full_text_oa"])
 scoring_weights = dict(mode_config.get("scoring_weights", {}))
 
 st.caption(
     f"Mode profile: papers={'on' if include_papers else 'off'}, trials={'on' if include_trials else 'off'}, "
-    f"phase II/III only={'on' if phase_2_3_only else 'off'}, rct/meta only={'on' if rct_meta_only else 'off'}"
+    f"phase II/III only={'on' if phase_2_3_only else 'off'}, rct/meta only={'on' if rct_meta_only else 'off'}, "
+    f"full text OA={'on' if use_full_text_oa else 'off'}, llm polish={'on' if llm_polish_summary else 'off'}"
 )
 
 any_source_selected = any(
     [include_papers, include_trials, include_preprints, include_journal_rss, include_fda_approvals]
 )
 
-preview_options = RunOptions(
+preview_options_kwargs = dict(
     mode_name=st.session_state["selected_mode"],
     days_back=days_back,
     include_trials=include_trials,
@@ -639,9 +719,13 @@ preview_options = RunOptions(
     include_preprints=include_preprints,
     include_journal_rss=include_journal_rss,
     include_fda_approvals=include_fda_approvals,
+    use_full_text_oa=use_full_text_oa,
     force_full_refresh=force_full_refresh,
     incremental_cap_days=days_back,
 )
+if "llm_polish_summary" in inspect.signature(RunOptions).parameters:
+    preview_options_kwargs["llm_polish_summary"] = llm_polish_summary
+preview_options = RunOptions(**preview_options_kwargs)
 
 last_run_scope: tuple[str, str] | None = None
 if search_mode and search_query.strip():
@@ -720,9 +804,12 @@ if run_clicked:
             phase_2_3_only=phase_2_3_only,
             rct_meta_only=rct_meta_only,
             scoring_weights=scoring_weights,
+            use_full_text_oa=use_full_text_oa,
             incremental_cap_days=days_back,
             force_full_refresh=force_full_refresh,
         )
+        if "llm_polish_summary" in inspect.signature(RunOptions).parameters:
+            run_options_kwargs["llm_polish_summary"] = llm_polish_summary
         if "max_run_seconds" in inspect.signature(RunOptions).parameters:
             run_options_kwargs["max_run_seconds"] = limits["max_run_seconds"]
 
@@ -806,8 +893,19 @@ recent_paper_items = [i for i in paper_items if _is_within_window(i, days_back)]
 recent_trial_items = [i for i in trial_items if _is_within_window(i, days_back)]
 
 
-t0, t1, t2, t3, t4 = st.tabs(["Digest", "New", "Trials", "Saved", "Research Tools"])
-with t0:
+if "active_view" not in st.session_state:
+    st.session_state["active_view"] = "Digest"
+
+active_view = st.segmented_control(
+    "View",
+    ["Digest", "New", "Trials", "Saved", "Research Tools"],
+    selection_mode="single",
+    default=st.session_state.get("active_view", "Digest"),
+    key="active_view",
+)
+active_view = active_view or st.session_state.get("active_view", "Digest")
+
+if active_view == "Digest":
     if st.session_state.get("has_run_once", False):
         st.markdown("#### Top 7 in 5 minutes")
         top_priority = st.selectbox(
@@ -816,6 +914,12 @@ with t0:
             index=0,
             key="top_priority",
         )
+        top_sort = st.selectbox(
+            "Sort (Top N)",
+            ["Highest score", "Newest", "Most cited", "Hot"],
+            index=0,
+            key="sort_topn",
+        )
         top_n = st.slider("Top N (quick review)", min_value=3, max_value=15, value=7, step=1, key="top_n")
         if top_priority == "Papers first":
             source_rank = lambda x: 1 if x.get("source") in trial_sources else 0
@@ -823,27 +927,33 @@ with t0:
             source_rank = lambda x: 0 if x.get("source") in trial_sources else 1
         else:
             source_rank = lambda x: 0
-        def top_sort_key(x: dict) -> tuple:
+
+        def metric_rank(x: dict) -> tuple:
             dt = _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)
-            # Keep relevance order descending inside each priority bucket.
-            return (
-                source_rank(x),
-                -(x.get("score") or 0),
-                -(x.get("citations") or 0),
-                -dt.timestamp(),
-            )
-        top_items = sorted(
-            recent_paper_items + recent_trial_items,
-            key=top_sort_key,
-        )[:top_n]
+            if top_sort == "Newest":
+                return (-dt.timestamp(), -(x.get("score") or 0), -(x.get("citations") or 0))
+            if top_sort == "Most cited":
+                return (-(x.get("citations") or 0), -(x.get("score") or 0), -dt.timestamp())
+            if top_sort == "Hot":
+                return (-hot_score(x), -(x.get("score") or 0), -dt.timestamp())
+            return (-(x.get("score") or 0), -(x.get("citations") or 0), -dt.timestamp())
+
+        def top_sort_key(x: dict) -> tuple:
+            return (source_rank(x), *metric_rank(x))
+
+        top_items = sorted(recent_paper_items + recent_trial_items, key=top_sort_key)[:top_n]
         if not top_items:
             st.info("No items found for Top 7 in the selected window and filters.")
         for item in top_items:
             render_top_card(item)
 
-with t1:
+elif active_view == "New":
     if st.session_state.get("has_run_once", False):
-        new_sort = st.selectbox("Sort (New)", ["Newest", "Highest score", "Most cited", "Hot"], key="sort_new")
+        new_sort = st.selectbox(
+            "Sort (New)",
+            ["Newest", "Highest score", "Most cited", "Hot"],
+            key="sort_new",
+        )
         if new_sort == "Most cited":
             new_items = sorted(
                 recent_paper_items,
@@ -873,9 +983,13 @@ with t1:
         for item in new_items[:100]:
             render_card(item, panel="new")
 
-with t2:
+elif active_view == "Trials":
     if st.session_state.get("has_run_once", False):
-        trial_sort = st.selectbox("Sort (Trials)", ["Most recently updated", "Highest score", "Most cited", "Hot"], key="sort_trials")
+        trial_sort = st.selectbox(
+            "Sort (Trials)",
+            ["Most recently updated", "Highest score", "Most cited", "Hot"],
+            key="sort_trials",
+        )
         if trial_sort == "Highest score":
             trial_items_sorted = sorted(
                 recent_trial_items,
@@ -905,10 +1019,10 @@ with t2:
         for item in trial_items_sorted[:100]:
             render_card(item, panel="trials")
 
-with t3:
+elif active_view == "Saved":
     st.caption("Saved view will list starred/bookmarked papers in a future update.")
 
-with t4:
+elif active_view == "Research Tools":
     if st.session_state.get("has_run_once", False):
         table_scope = st.selectbox(
             "Table scope",
@@ -916,12 +1030,43 @@ with t4:
             index=0,
             key="table_scope",
         )
+        table_sort = st.selectbox(
+            "Sort (Table)",
+            ["Newest", "Highest score", "Most cited", "Hot"],
+            index=0,
+            key="table_sort",
+        )
         if table_scope == "Papers only":
             table_items = recent_paper_items
         elif table_scope == "Trials only":
             table_items = recent_trial_items
         else:
             table_items = recent_paper_items + recent_trial_items
+
+        if table_sort == "Most cited":
+            table_items = sorted(
+                table_items,
+                key=lambda x: (x.get("citations") or 0, x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
+                reverse=True,
+            )
+        elif table_sort == "Hot":
+            table_items = sorted(
+                table_items,
+                key=lambda x: (hot_score(x), x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
+                reverse=True,
+            )
+        elif table_sort == "Highest score":
+            table_items = sorted(
+                table_items,
+                key=lambda x: (x.get("score") or 0, _item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc)),
+                reverse=True,
+            )
+        else:
+            table_items = sorted(
+                table_items,
+                key=lambda x: (_item_datetime(x) or datetime.min.replace(tzinfo=timezone.utc), x.get("score") or 0),
+                reverse=True,
+            )
 
         rows = [_table_row(i) for i in table_items]
         if not rows:

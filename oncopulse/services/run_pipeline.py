@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from .. import db, nlp, packs, scoring, summarize
-from ..ingest import clinicaltrials, dedup, europepmc, fda, openalex, preprints, pubmed, rss_feeds, semanticscholar
+from ..ingest import clinicaltrials, dedup, europepmc, fda, fulltext_oa, openalex, preprints, pubmed, rss_feeds, semanticscholar
 
 MODE_ALL = "All"
 MODE_CLINICIAN = "Clinician (Practice-changing)"
@@ -32,6 +32,7 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
         "include_fda_approvals": True,
         "phase_2_3_only": False,
         "rct_meta_only": False,
+        "use_full_text_oa": False,
         "scoring_weights": {},
     },
     MODE_CLINICIAN: {
@@ -42,6 +43,7 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
         "include_fda_approvals": True,
         "phase_2_3_only": True,
         "rct_meta_only": True,
+        "use_full_text_oa": False,
         "scoring_weights": {
             "phase_iii": 10,
             "randomized": 8,
@@ -58,6 +60,7 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
         "include_fda_approvals": True,
         "phase_2_3_only": False,
         "rct_meta_only": False,
+        "use_full_text_oa": False,
         "scoring_weights": {
             "meta_analysis": 6,
             "phase_iii": 6,
@@ -74,6 +77,7 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
         "include_fda_approvals": True,
         "phase_2_3_only": False,
         "rct_meta_only": False,
+        "use_full_text_oa": False,
         "scoring_weights": {
             "phase_iii": 8,
             "phase_ii": 5,
@@ -90,6 +94,7 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
         "include_fda_approvals": False,
         "phase_2_3_only": False,
         "rct_meta_only": False,
+        "use_full_text_oa": True,
         "scoring_weights": {
             "meta_analysis": 5,
             "phase_iii": 6,
@@ -105,6 +110,7 @@ MODE_PRESETS: dict[str, dict[str, Any]] = {
         "include_fda_approvals": False,
         "phase_2_3_only": False,
         "rct_meta_only": False,
+        "use_full_text_oa": False,
         "scoring_weights": {
             "phase_iii": 7,
             "randomized": 6,
@@ -139,6 +145,8 @@ class RunOptions:
     enable_semantic_scholar: bool = False
     incremental_cap_days: int | None = None
     force_full_refresh: bool = False
+    use_full_text_oa: bool = False
+    llm_polish_summary: bool = False
 
 
 def get_mode_preset(mode_name: str) -> dict[str, Any]:
@@ -360,6 +368,10 @@ def _finalize_items(
 
         item["fingerprint"] = dedup.fingerprint_item(item)
         item["mode_name"] = options.mode_name
+        item["full_text_source"] = None
+        item["support_snippets"] = []
+        if options.use_full_text_oa and item.get("source") in {"pubmed", "europepmc"}:
+            fulltext_oa.enrich_item_from_oa_full_text(conn, item)
         if options.enrich_citations:
             citations = openalex.get_citations(conn, item.get("doi"))
             citation_source = "openalex" if citations is not None else None
@@ -374,7 +386,7 @@ def _finalize_items(
             item["citations_source"] = None
 
         scoring.score_and_attach(item, rules, weight_overrides=options.scoring_weights)
-        item["summary_text"] = summarize.summarize_item(item)
+        item["summary_text"] = summarize.summarize_item(item, llm_polish=options.llm_polish_summary)
         db.upsert_item(conn, item)
         persisted += 1
 

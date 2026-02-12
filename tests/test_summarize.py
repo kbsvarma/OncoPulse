@@ -46,3 +46,37 @@ def test_summary_avoids_prescribing_language():
     summary = summarize_item(item).lower()
     for phrase in BANNED_PRESCRIPTIVE_PHRASES:
         assert phrase not in summary
+
+
+def test_summary_llm_polish_uses_polished_when_valid(monkeypatch):
+    item = {
+        "title": "Phase III RCT",
+        "abstract_or_text": "Randomized phase III trial in NSCLC with overall survival endpoint.",
+        "support_snippets": ["Randomized phase III trial in NSCLC with overall survival endpoint."],
+    }
+
+    def fake_polish(summary, source_text, support_snippets):
+        return (
+            "Study type / phase: Randomized trial\n"
+            "Population: Not stated\n"
+            "Intervention vs comparator: Not stated\n"
+            "Endpoints mentioned: overall survival\n"
+            "Key finding: Not explicitly stated in provided text\n"
+            "Supporting snippets: Randomized phase III trial in NSCLC with overall survival endpoint.\n"
+            "Why it matters: Study signal exists."
+        )
+
+    monkeypatch.setattr("oncopulse.summarize.llm.polish_summary_strict", fake_polish)
+    summary = summarize_item(item, llm_polish=True)
+    assert "Why it matters: Study signal exists." in summary
+
+
+def test_summary_llm_polish_falls_back_when_unavailable(monkeypatch):
+    item = {
+        "title": "Phase III RCT",
+        "abstract_or_text": "Randomized phase III trial in NSCLC with overall survival endpoint.",
+    }
+    monkeypatch.setattr("oncopulse.summarize.llm.polish_summary_strict", lambda *args, **kwargs: None)
+    summary = summarize_item(item, llm_polish=True)
+    assert "Study type / phase:" in summary
+    assert "Why it matters:" in summary

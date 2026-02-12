@@ -1,4 +1,5 @@
 from oncopulse import db
+from oncopulse.services.run_pipeline import MODE_CLINICIAN, MODE_RESEARCHER, get_mode_preset
 
 
 def test_item_mode_name_persisted(tmp_path):
@@ -30,3 +31,10 @@ def test_item_mode_name_persisted(tmp_path):
     rows = db.get_ranked_items(conn, "lung", "Immunotherapy")
     assert rows
     assert rows[0].get("mode_name") == "Clinician (Practice-changing)"
+
+
+def test_fulltext_mode_defaults():
+    clinician = get_mode_preset(MODE_CLINICIAN)
+    researcher = get_mode_preset(MODE_RESEARCHER)
+    assert clinician.get("use_full_text_oa") is False
+    assert researcher.get("use_full_text_oa") is True

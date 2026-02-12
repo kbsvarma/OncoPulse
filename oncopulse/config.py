@@ -31,3 +31,13 @@ CITATION_CACHE_TTL_DAYS = 14
 REQUEST_TIMEOUT = 8
 MAX_RETRIES = 2
 BACKOFF_SECONDS = 0.8
+
+PMC_IDCONV_BASE = "https://pmc.ncbi.nlm.nih.gov/tools/idconv/api/v1/articles/"
+PMC_OA_BASE = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi"
+EUROPE_PMC_REST_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+FULLTEXT_CACHE_TTL_DAYS = int(os.getenv("FULLTEXT_CACHE_TTL_DAYS", "7"))
+
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ONCOPULSE_LLM_MODEL = os.getenv("ONCOPULSE_LLM_MODEL", "gpt-4o-mini")
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "12"))

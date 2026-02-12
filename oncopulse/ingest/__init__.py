@@ -7,4 +7,5 @@ __all__ = [
     "preprints",
     "rss_feeds",
     "fda",
+    "fulltext_oa",
 ]

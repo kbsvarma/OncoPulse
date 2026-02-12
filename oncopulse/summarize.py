@@ -1,5 +1,6 @@
 import re
 from typing import Any
+from . import llm
 from .text_utils import clean_text
 
 NO_INFO_WHY_IT_MATTERS = "Why it matters: Not enough info in abstract."
@@ -158,17 +159,20 @@ def _build_why_it_matters(
     return why
 
 
-def summarize_item(item: dict[str, Any]) -> str:
-    text = clean_text(item.get("abstract_or_text"))
+def summarize_item(item: dict[str, Any], llm_polish: bool = False) -> str:
+    text = clean_text(item.get("full_text_text") or item.get("abstract_or_text"))
+    support_snippets = item.get("support_snippets") or []
     if not text:
-        return (
+        summary = (
             "Study type / phase: Not stated\n"
             "Population: Not stated\n"
             "Intervention vs comparator: Not stated\n"
             "Endpoints mentioned: Not stated\n"
             "Key finding: No abstract available\n"
+            "Supporting snippets: Not available\n"
             f"{NO_INFO_WHY_IT_MATTERS}"
         )
+        return summary
 
     study = _detect_study_type(text)
     pop = _extract_population(text)
@@ -176,11 +180,20 @@ def summarize_item(item: dict[str, Any]) -> str:
     endpoints = _extract_endpoints(text)
     key = _extract_key_finding(text)
     why = _build_why_it_matters(item, study, endpoints, pop, key, text)
-    return (
+    snippets_text = " | ".join([clean_text(s) for s in support_snippets[:3] if clean_text(s)])
+    if not snippets_text:
+        snippets_text = "Not available"
+    summary = (
         f"Study type / phase: {study}\n"
         f"Population: {pop}\n"
         f"Intervention vs comparator: {intervention}\n"
         f"Endpoints mentioned: {endpoints}\n"
         f"Key finding: {key}\n"
+        f"Supporting snippets: {snippets_text}\n"
         f"{why}"
     )
+
+    if not llm_polish:
+        return summary
+    polished = llm.polish_summary_strict(summary, source_text=text, support_snippets=support_snippets)
+    return polished or summary
