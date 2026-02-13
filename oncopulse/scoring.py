@@ -20,6 +20,10 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "global_penalty": -2,
     "include_term": 1,
     "exclude_term": -1,
+    "query_exact_phrase": 8,
+    "query_concept": 3,
+    "query_keyword": 1,
+    "query_coverage": 2,
 }
 
 BOOSTS = [
@@ -51,6 +55,58 @@ def _resolved_weights(overrides: dict[str, float] | None) -> dict[str, float]:
                 except (TypeError, ValueError):
                     continue
     return weights
+
+def _contains_term(blob: str, term: str) -> bool:
+    t = (term or "").strip().lower()
+    if not t:
+        return False
+    if re.fullmatch(r"[a-z0-9]+", t):
+        return re.search(rf"\b{re.escape(t)}\b", blob) is not None
+    return t in blob
+
+
+def _query_relevance_boost(blob: str, query_context: dict[str, Any] | None, w: dict[str, float]) -> tuple[int, list[str]]:
+    if not query_context:
+        return 0, []
+
+    explain: list[str] = []
+    score = 0
+
+    raw_query = str(query_context.get("raw_query") or query_context.get("query_text") or "").strip().lower()
+    if raw_query and len(raw_query) >= 12 and raw_query in blob:
+        points = int(w["query_exact_phrase"])
+        score += points
+        explain.append(f"+{points} query phrase match")
+
+    concepts_raw = query_context.get("concepts") or []
+    concept_hits = 0
+    for group in concepts_raw:
+        if not isinstance(group, list):
+            continue
+        terms = [str(t).strip().lower() for t in group if str(t).strip()]
+        if terms and any(_contains_term(blob, t) for t in terms):
+            concept_hits += 1
+    if concept_hits:
+        points = int(w["query_concept"]) * concept_hits
+        score += points
+        explain.append(f"+{points} query concept match ({concept_hits})")
+
+    keywords_raw = query_context.get("keywords") or []
+    keywords = [str(k).strip().lower() for k in keywords_raw if str(k).strip()]
+    keyword_hits = [k for k in keywords if _contains_term(blob, k)]
+    if keyword_hits:
+        counted = min(len(set(keyword_hits)), 6)
+        points = int(w["query_keyword"]) * counted
+        score += points
+        explain.append(f"+{points} query keyword match ({counted})")
+
+        unique_kw = len(set(keywords))
+        if unique_kw >= 3 and (len(set(keyword_hits)) / unique_kw) >= 0.5:
+            points = int(w["query_coverage"])
+            score += points
+            explain.append(f"+{points} query coverage")
+
+    return score, explain
 
 
 def _parse_pub_date(value: str | None) -> datetime | None:
@@ -165,6 +221,10 @@ def score_item(
             points = int(w["exclude_term"])
             score += points
             explain.append(f"{points} exclude term: {term}")
+
+    q_points, q_explain = _query_relevance_boost(blob, pack_rules.get("search_query_context"), w)
+    score += q_points
+    explain.extend(q_explain)
 
     return score, explain
 

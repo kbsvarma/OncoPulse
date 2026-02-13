@@ -50,6 +50,7 @@ CONCEPT_PATTERNS: list[tuple[re.Pattern[str], list[str]]] = [
     (re.compile(r"\btriple[-\s]?negative\b|\btnbc\b", re.I), ["triple-negative breast cancer", "TNBC"]),
     (re.compile(r"\bher2\b", re.I), ["HER2", "ERBB2"]),
     (re.compile(r"\bcrc\b|\bcolorectal\b", re.I), ["colorectal cancer", "CRC"]),
+    (re.compile(r"\beye\b|\bocular\b|\bvision\b|\bretina\b|\bretinal\b|\bophthalm", re.I), ["eye", "ocular", "vision", "retina", "ophthalmic"]),
 ]
 
 

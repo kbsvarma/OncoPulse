@@ -19,3 +19,9 @@ def test_extract_keywords_removes_stopwords_and_keeps_signal():
     assert "randomized" in terms
     assert "oncology" not in terms
     assert "cancer" not in terms
+
+
+def test_build_search_queries_expands_eye_to_ocular_concepts():
+    out = nlp.build_search_queries("eye toxicity")
+    paper_query = str(out["paper_query"]).lower()
+    assert "ocular" in paper_query or "vision" in paper_query or "retina" in paper_query

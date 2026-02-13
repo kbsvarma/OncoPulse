@@ -8,7 +8,7 @@ import time
 
 import streamlit as st
 
-from oncopulse import db, packs
+from oncopulse import db, nlp, packs
 from oncopulse.extract_fields import detect_endpoints, detect_phase, detect_sample_size, detect_study_type
 from oncopulse.services.run_pipeline import (
     MODE_ALL,
@@ -34,6 +34,8 @@ if "selected_mode" not in st.session_state:
     st.session_state["selected_mode"] = MODE_ALL
 if "new_custom_name" not in st.session_state:
     st.session_state["new_custom_name"] = ""
+if "clear_notice" not in st.session_state:
+    st.session_state["clear_notice"] = ""
 
 header_l, header_r = st.columns([5, 1])
 with header_l:
@@ -365,6 +367,12 @@ def _score_badges(explain: list[str]) -> list[str]:
             badges.append("Preclinical penalty")
         elif "case report" in lx:
             badges.append("Case report penalty")
+        elif "query phrase" in lx:
+            badges.append("Query phrase")
+        elif "query concept" in lx:
+            badges.append("Concept match")
+        elif "query keyword" in lx or "query coverage" in lx:
+            badges.append("Keyword match")
     # Keep unique order.
     seen: set[str] = set()
     unique: list[str] = []
@@ -374,6 +382,85 @@ def _score_badges(explain: list[str]) -> list[str]:
         seen.add(b)
         unique.append(b)
     return unique
+
+def _query_term_in_blob(blob: str, term: str) -> bool:
+    t = (term or "").strip().lower()
+    if not t:
+        return False
+    if t.isalnum():
+        return re.search(rf"\b{re.escape(t)}\b", blob) is not None
+    return t in blob
+
+
+def _build_search_match_context(query: str) -> dict:
+    q = (query or "").strip()
+    if not q:
+        return {"raw_query": "", "keywords": [], "concepts": []}
+    bundle = nlp.build_search_queries(q)
+    return {
+        "raw_query": q,
+        "keywords": list(bundle.get("keywords") or []),
+        "concepts": list(bundle.get("concepts") or []),
+    }
+
+
+def _search_match_for_item(item: dict, ctx: dict | None) -> dict | None:
+    if not ctx:
+        return None
+    raw_query = str(ctx.get("raw_query") or "").strip().lower()
+    keywords = [str(k).strip().lower() for k in (ctx.get("keywords") or []) if str(k).strip()]
+    concepts = [g for g in (ctx.get("concepts") or []) if isinstance(g, list)]
+
+    blob = " ".join(
+        str(item.get(k) or "")
+        for k in ["title", "abstract_or_text", "conditions", "interventions", "primary_endpoints", "study_type", "phase"]
+    ).lower()
+
+    exact_hit = bool(raw_query and len(raw_query) >= 4 and raw_query in blob)
+    concept_hits = 0
+    matched_terms: list[str] = []
+    for group in concepts:
+        gterms = [str(t).strip().lower() for t in group if str(t).strip()]
+        if gterms and any(_query_term_in_blob(blob, t) for t in gterms):
+            concept_hits += 1
+            matched_terms.append(gterms[0])
+
+    keyword_hits = [k for k in keywords if _query_term_in_blob(blob, k)]
+    keyword_unique = list(dict.fromkeys(keyword_hits))
+    matched_terms.extend(keyword_unique)
+    matched_terms = list(dict.fromkeys(matched_terms))[:5]
+
+    score = 0
+    if exact_hit:
+        score += 45
+    if concepts:
+        score += min(35, int(35 * (concept_hits / max(1, len(concepts)))))
+    else:
+        score += min(20, concept_hits * 10)
+    if keywords:
+        score += min(20, int(20 * (len(keyword_unique) / max(1, len(set(keywords))))))
+
+    if score >= 70:
+        level = "High"
+        color = "#166534"
+        text = "#dcfce7"
+    elif score >= 40:
+        level = "Medium"
+        color = "#1e3a8a"
+        text = "#dbeafe"
+    else:
+        level = "Low"
+        color = "#7c2d12"
+        text = "#ffedd5"
+
+    reason = f"Matched: {', '.join(matched_terms)}" if matched_terms else "Matched weakly: low keyword/concept overlap"
+    return {
+        "score": max(0, min(100, score)),
+        "level": level,
+        "color": color,
+        "text": text,
+        "reason": reason,
+    }
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -474,7 +561,7 @@ def _summary_basis_text(item: dict) -> str:
     return "Summary basis: Not enough source text"
 
 
-def render_top_card(item: dict):
+def render_top_card(item: dict, search_match_ctx: dict | None = None):
     try:
         explain = json.loads(item.get("score_explain_json") or "[]")
     except Exception:
@@ -508,6 +595,15 @@ def render_top_card(item: dict):
             st.markdown(_full_text_badge_html(item.get("full_text_source")), unsafe_allow_html=True)
         if item.get("url"):
             st.markdown(f"[Open source link]({item['url']})")
+
+        search_match = _search_match_for_item(item, search_match_ctx)
+        if search_match:
+            st.markdown(
+                f"<span style='display:inline-block;padding:4px 10px;margin:2px 0;border-radius:999px;background:{search_match['color']};color:{search_match['text']};font-size:0.78rem;font-weight:600;'>Search match: {search_match['level']} ({search_match['score']}%)</span>",
+                unsafe_allow_html=True,
+            )
+            st.progress(int(search_match["score"]))
+            st.caption(search_match["reason"])
 
         if badges:
             badge_html = " ".join(
@@ -562,7 +658,7 @@ def _rows_to_csv(rows: list[dict]) -> str:
     return output.getvalue()
 
 
-def render_card(item: dict, panel: str):
+def render_card(item: dict, panel: str, search_match_ctx: dict | None = None):
     def _summary_to_markdown(summary_text: str) -> str:
         lines = [ln.strip() for ln in summary_text.splitlines() if ln.strip()]
         bullets: list[str] = []
@@ -596,6 +692,15 @@ def render_card(item: dict, panel: str):
         st.markdown(_confidence_badge_html(confidence), unsafe_allow_html=True)
         if item.get("full_text_source"):
             st.markdown(_full_text_badge_html(item.get("full_text_source")), unsafe_allow_html=True)
+
+        search_match = _search_match_for_item(item, search_match_ctx)
+        if search_match:
+            st.markdown(
+                f"<span style='display:inline-block;padding:4px 10px;margin:2px 0;border-radius:999px;background:{search_match['color']};color:{search_match['text']};font-size:0.78rem;font-weight:600;'>Search match: {search_match['level']} ({search_match['score']}%)</span>",
+                unsafe_allow_html=True,
+            )
+            st.progress(int(search_match["score"]))
+            st.caption(search_match["reason"])
 
         st.caption(f"Venue: {item.get('venue') or 'N/A'}")
         st.caption(f"PMID: {item.get('pmid') or '-'} | DOI: {item.get('doi') or '-'} | NCT: {item.get('nct_id') or '-'}")
@@ -647,6 +752,8 @@ search_query = st.text_input(
     placeholder="e.g., metastatic NSCLC pembrolizumab phase 3",
     disabled=not search_mode,
 )
+
+search_match_ctx = _build_search_match_context(search_query) if search_mode and search_query.strip() else None
 
 specialty_sorted = sorted(specialties, key=_pretty_specialty)
 top1, top2, top3, top4 = st.columns([2, 2, 1, 2])
@@ -750,15 +857,50 @@ if last_run_scope:
     else:
         st.caption("Last run: none for current scope/sources.")
 
-run_row_l, run_row_r = st.columns([1, 8])
-with run_row_l:
-    run_clicked = st.button(
-        "Run",
-        type="primary",
-        disabled=(not search_query.strip()) if search_mode else (not (specialty and subcategory)),
-    )
+clear_scope: tuple[str, str] | None = None
+if search_mode:
+    existing_search_scope = st.session_state.get("last_search_key", "").strip()
+    if existing_search_scope:
+        clear_scope = ("search", existing_search_scope)
+    elif search_query.strip():
+        clear_scope = ("search", _query_key(search_query.strip()))
+elif specialty and subcategory:
+    clear_scope = (specialty, subcategory)
+
+if st.session_state.get("clear_notice"):
+    st.success(st.session_state["clear_notice"])
+    st.session_state["clear_notice"] = ""
+
+actions_slot = st.empty()
+with actions_slot.container():
+    run_row_l, run_row_m, _ = st.columns([1.0, 1.0, 8.0], gap="medium")
+    with run_row_l:
+        run_clicked = st.button(
+            "Run",
+            key="run_button_main",
+            type="primary",
+            use_container_width=True,
+            disabled=(not search_query.strip()) if search_mode else (not (specialty and subcategory)),
+        )
+    with run_row_m:
+        clear_clicked = st.button(
+            "Clear results",
+            key="clear_results_main",
+            use_container_width=True,
+            disabled=clear_scope is None,
+            help="Clears only the current search/specialty scope.",
+        )
+
+if clear_clicked and clear_scope is not None:
+    db.clear_scope_items(conn, clear_scope[0], clear_scope[1])
+    st.session_state["has_run_once"] = False
+    if clear_scope[0] == "search":
+        st.session_state["last_search_key"] = ""
+    st.session_state["clear_notice"] = "Cleared results for current scope."
+    st.rerun()
 
 if run_clicked:
+    actions_slot.empty()
     with st.spinner("Running ingestion and ranking..."):
         selected_mode_name = st.session_state.get("selected_mode", MODE_ALL)
         is_all_mode = selected_mode_name == MODE_ALL
@@ -900,7 +1042,6 @@ active_view = st.segmented_control(
     "View",
     ["Digest", "New", "Trials", "Saved", "Research Tools"],
     selection_mode="single",
-    default=st.session_state.get("active_view", "Digest"),
     key="active_view",
 )
 active_view = active_view or st.session_state.get("active_view", "Digest")
@@ -945,7 +1086,7 @@ if active_view == "Digest":
         if not top_items:
             st.info("No items found for Top 7 in the selected window and filters.")
         for item in top_items:
-            render_top_card(item)
+            render_top_card(item, search_match_ctx=search_match_ctx)
 
 elif active_view == "New":
     if st.session_state.get("has_run_once", False):
@@ -981,7 +1122,7 @@ elif active_view == "New":
         if not new_items:
             st.info("No paper items found in the selected time window. Try a longer window or broader sources.")
         for item in new_items[:100]:
-            render_card(item, panel="new")
+            render_card(item, panel="new", search_match_ctx=search_match_ctx)
 
 elif active_view == "Trials":
     if st.session_state.get("has_run_once", False):
@@ -1017,7 +1158,7 @@ elif active_view == "Trials":
         if not trial_items_sorted:
             st.info("No trial updates found in the selected time window.")
         for item in trial_items_sorted[:100]:
-            render_card(item, panel="trials")
+            render_card(item, panel="trials", search_match_ctx=search_match_ctx)
 
 elif active_view == "Saved":
     st.caption("Saved view will list starred/bookmarked papers in a future update.")

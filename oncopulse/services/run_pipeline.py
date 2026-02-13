@@ -247,6 +247,51 @@ def _query_key(query: str) -> str:
     return f"query:{query.strip().lower()[:180]}"
 
 
+def _item_search_blob(item: dict[str, Any]) -> str:
+    fields = [
+        item.get("title"),
+        item.get("abstract_or_text"),
+        item.get("conditions"),
+        item.get("interventions"),
+        item.get("primary_endpoints"),
+        item.get("study_type"),
+        item.get("phase"),
+    ]
+    return " ".join(str(v or "") for v in fields).lower()
+
+
+def _contains_query_term(blob: str, term: str) -> bool:
+    token = (term or "").strip().lower()
+    if not token:
+        return False
+    if token.isalnum():
+        import re
+
+        return re.search(rf"\b{re.escape(token)}\b", blob) is not None
+    return token in blob
+
+
+def _is_search_relevant(item: dict[str, Any], query_context: dict[str, Any]) -> bool:
+    blob = _item_search_blob(item)
+    if not blob.strip():
+        return False
+
+    concepts = query_context.get("concepts") or []
+    for group in concepts:
+        if isinstance(group, list) and any(_contains_query_term(blob, str(t)) for t in group):
+            return True
+
+    keywords = query_context.get("keywords") or []
+    if any(_contains_query_term(blob, str(k)) for k in keywords):
+        return True
+
+    raw_query = str(query_context.get("raw_query") or "").strip().lower()
+    if raw_query and len(raw_query) >= 4 and raw_query in blob:
+        return True
+
+    return False
+
+
 def _ingest_for_query(
     specialty: str,
     subcategory: str,
@@ -484,8 +529,13 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
         trial_query = str(query_bundle.get("trial_query") or query_text)
         rules = _default_rules()
         rules["include_terms"] = list(query_bundle.get("keywords") or [])
+        rules["search_query_context"] = {
+            "raw_query": query_text,
+            "keywords": list(query_bundle.get("keywords") or []),
+            "concepts": list(query_bundle.get("concepts") or []),
+        }
 
-        ingested = _ingest_for_query(
+        ingested_raw = _ingest_for_query(
             specialty,
             subcategory,
             paper_query,
@@ -493,6 +543,8 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             effective_options,
             _check_timeout,
         )
+        query_context = rules.get("search_query_context") or {}
+        ingested = [i for i in ingested_raw if _is_search_relevant(i, query_context)]
         return _finalize_items(conn, run_id, ingested, rules, effective_options, _check_timeout)
     except TimeoutError as exc:
         db.finish_run(conn, run_id, "timeout", len(ingested), 0, str(exc))

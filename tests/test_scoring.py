@@ -66,3 +66,31 @@ def test_hot_score_prefers_recent_with_similar_citations():
     older = {"citations": 20, "published_at": "2020-01-01"}
     newer = {"citations": 20, "published_at": "2025-12-01"}
     assert hot_score(newer, now=now) > hot_score(older, now=now)
+
+
+def test_search_query_relevance_boosts_matching_items():
+    rules = dict(PACK_RULES)
+    rules["search_query_context"] = {
+        "raw_query": "metastatic NSCLC pembrolizumab overall survival",
+        "keywords": ["metastatic", "nsclc", "pembrolizumab", "overall", "survival"],
+        "concepts": [["NSCLC", "non-small cell lung cancer"], ["overall survival", "OS"]],
+    }
+
+    matched = {
+        "title": "Metastatic NSCLC treated with pembrolizumab",
+        "abstract_or_text": "Overall survival improved in randomized cohort.",
+        "venue": "NEJM",
+        "citations": 0,
+    }
+    off_topic = {
+        "title": "Localized prostate cancer surgery outcomes",
+        "abstract_or_text": "Quality of life outcomes reported.",
+        "venue": "NEJM",
+        "citations": 0,
+    }
+
+    match_score, match_explain = score_item(matched, rules)
+    off_score, _ = score_item(off_topic, rules)
+
+    assert match_score > off_score
+    assert any("query concept match" in e for e in match_explain)
