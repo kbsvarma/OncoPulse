@@ -458,6 +458,8 @@ def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) ->
         resolved_days_back=resolved_days,
         force_full_refresh=effective_options.force_full_refresh,
     )
+    scope_started_at_row = conn.execute("SELECT started_at FROM run_history WHERE id = ?", (run_id,)).fetchone()
+    scope_started_at = str(scope_started_at_row["started_at"]) if scope_started_at_row else datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
 
     def _check_timeout() -> None:
@@ -508,8 +510,6 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
     subcategory = _query_key(query_text)
     resolved_days, _ = resolve_incremental_days_back(conn, specialty, subcategory, options)
     effective_options = RunOptions(**{**vars(options), "days_back": resolved_days})
-    # Search mode is always source-driven: clear previous cached records for this query scope.
-    db.clear_scope_items(conn, specialty, subcategory)
     run_id = db.create_run(
         conn,
         specialty,
@@ -526,6 +526,7 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             raise TimeoutError(f"Timed out after {effective_options.max_run_seconds}s")
 
     ingested: list[dict[str, Any]] = []
+    diagnostics: dict[str, Any] = {}
     try:
         query_bundle = nlp.build_search_queries(query_text)
         paper_query = str(query_bundle.get("paper_query") or query_text)
@@ -558,6 +559,17 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             "relevant_hits_by_source": _source_counts(ingested),
         }
         out = _finalize_items(conn, run_id, ingested, rules, effective_options)
+        # Keep previous results during run; prune only stale pre-run records after success.
+        conn.execute(
+            """
+            DELETE FROM items
+            WHERE specialty = ?
+              AND subcategory = ?
+              AND (last_seen_at IS NULL OR last_seen_at < ?)
+            """,
+            (specialty, subcategory, scope_started_at),
+        )
+        conn.commit()
         out["diagnostics"] = diagnostics
         return out
     except TimeoutError as exc:
