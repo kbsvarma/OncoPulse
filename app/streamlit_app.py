@@ -38,6 +38,8 @@ if "clear_notice" not in st.session_state:
     st.session_state["clear_notice"] = ""
 if "run_feedback" not in st.session_state:
     st.session_state["run_feedback"] = None
+if "search_diagnostics" not in st.session_state:
+    st.session_state["search_diagnostics"] = {}
 
 header_l, header_r = st.columns([5, 1])
 with header_l:
@@ -881,6 +883,23 @@ if st.session_state.get("run_feedback"):
         st.success(msg)
     st.session_state["run_feedback"] = None
 
+if search_mode and st.session_state.get("search_diagnostics"):
+    diag = st.session_state.get("search_diagnostics") or {}
+    with st.expander("Search diagnostics", expanded=False):
+        st.caption("Effective queries used")
+        st.code(f"Paper query: {diag.get('paper_query') or '-'}\nTrial query: {diag.get('trial_query') or '-'}", language="text")
+        st.caption(
+            f"Hits before relevance filter: {diag.get('raw_hits_total', 0)} | "
+            f"after filter: {diag.get('relevant_hits_total', 0)}"
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Raw hits by source**")
+            st.json(diag.get("raw_hits_by_source") or {})
+        with c2:
+            st.markdown("**Relevant hits by source**")
+            st.json(diag.get("relevant_hits_by_source") or {})
+
 actions_slot = st.empty()
 with actions_slot.container():
     run_row_l, run_row_m, _ = st.columns([1.0, 1.0, 8.0], gap="medium")
@@ -906,6 +925,7 @@ if clear_clicked and clear_scope is not None:
     st.session_state["has_run_once"] = False
     if clear_scope[0] == "search":
         st.session_state["last_search_key"] = ""
+        st.session_state["search_diagnostics"] = {}
     st.session_state["clear_notice"] = "Cleared results for current scope."
     st.rerun()
 
@@ -936,6 +956,14 @@ if run_clicked:
                 "max_run_seconds": 28 if is_all_mode else 12,
                 "max_total_run_seconds": 45,
             }
+
+        if search_mode:
+            qtxt = search_query.strip().lower()
+            token_count = len([t for t in qtxt.split() if t])
+            short_or_broad = (len(qtxt) <= 4) or (token_count <= 2)
+            if short_or_broad:
+                limits["max_run_seconds"] += 20
+                limits["max_total_run_seconds"] += 20
 
         run_options_kwargs = dict(
             mode_name=st.session_state["selected_mode"],
@@ -972,6 +1000,7 @@ if run_clicked:
         overall_timed_out = False
         overall_start = time.monotonic()
 
+        timeout_notes: list[str] = []
         if search_mode:
             result = run_pipeline_query(conn, query=search_query.strip(), options=RunOptions(**run_options_kwargs))
             total_ingested = result["ingested_count"]
@@ -979,7 +1008,11 @@ if run_clicked:
             run_count = 1
             timed_out_runs = 1 if result.get("timed_out") else 0
             st.session_state["last_search_key"] = _query_key(search_query.strip())
+            st.session_state["search_diagnostics"] = result.get("diagnostics") or {}
+            if result.get("timeout_reason"):
+                timeout_notes.append(str(result.get("timeout_reason")))
         else:
+            st.session_state["search_diagnostics"] = {}
             targets = [(specialty, subcategory)] if (specialty and subcategory) else []
             max_total_run_seconds = limits["max_total_run_seconds"]
             for sp, sub in targets:
@@ -991,15 +1024,22 @@ if run_clicked:
                 total_deduped += result["deduped_count"]
                 if result.get("timed_out"):
                     timed_out_runs += 1
+                    if result.get("timeout_reason"):
+                        timeout_notes.append(str(result.get("timeout_reason")))
                 run_count += 1
 
     st.session_state["has_run_once"] = True
     if overall_timed_out or timed_out_runs:
+        hint = ""
+        if timeout_notes:
+            hint = f" | Reason: {timeout_notes[0]}"
+        if search_mode and len(search_query.strip()) <= 4:
+            hint += " | Tip: Short broad queries may need more specific terms (e.g., ocular melanoma, retinal toxicity)."
         st.session_state["run_feedback"] = (
             "warning",
             f"Run completed with timeout safeguards. Packs run: {run_count} | "
             f"Ingested: {total_ingested} | Deduped: {total_deduped} | "
-            f"Timed-out packs: {timed_out_runs}",
+            f"Timed-out packs: {timed_out_runs}{hint}",
         )
     else:
         st.session_state["run_feedback"] = (

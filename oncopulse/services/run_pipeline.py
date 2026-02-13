@@ -247,6 +247,14 @@ def _query_key(query: str) -> str:
     return f"query:{query.strip().lower()[:180]}"
 
 
+def _source_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for it in items:
+        src = str(it.get("source") or "unknown").lower()
+        out[src] = out.get(src, 0) + 1
+    return out
+
+
 def _item_search_blob(item: dict[str, Any]) -> str:
     fields = [
         item.get("title"),
@@ -457,6 +465,7 @@ def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) ->
             raise TimeoutError(f"Timed out after {effective_options.max_run_seconds}s")
 
     ingested: list[dict[str, Any]] = []
+    diagnostics: dict[str, Any] = {}
     try:
         rules = packs.get_pack(specialty, subcategory)
         ingested = _ingest_for_query(
@@ -476,6 +485,7 @@ def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) ->
             "ingested_count": len(ingested),
             "deduped_count": 0,
             "timed_out": True,
+            "timeout_reason": str(exc),
         }
     except Exception as exc:  # noqa: BLE001
         db.finish_run(conn, run_id, "failed", len(ingested), 0, str(exc))
@@ -491,6 +501,7 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             "ingested_count": 0,
             "deduped_count": 0,
             "timed_out": False,
+            "diagnostics": {},
         }
 
     specialty = "search"
@@ -537,7 +548,18 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
         )
         query_context = rules.get("search_query_context") or {}
         ingested = [i for i in ingested_raw if _is_search_relevant(i, query_context)]
-        return _finalize_items(conn, run_id, ingested, rules, effective_options)
+        diagnostics = {
+            "query": query_text,
+            "paper_query": paper_query,
+            "trial_query": trial_query,
+            "raw_hits_total": len(ingested_raw),
+            "relevant_hits_total": len(ingested),
+            "raw_hits_by_source": _source_counts(ingested_raw),
+            "relevant_hits_by_source": _source_counts(ingested),
+        }
+        out = _finalize_items(conn, run_id, ingested, rules, effective_options)
+        out["diagnostics"] = diagnostics
+        return out
     except TimeoutError as exc:
         db.finish_run(conn, run_id, "timeout", len(ingested), 0, str(exc))
         return {
@@ -546,6 +568,8 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
             "ingested_count": len(ingested),
             "deduped_count": 0,
             "timed_out": True,
+            "timeout_reason": str(exc),
+            "diagnostics": diagnostics,
         }
     except Exception as exc:  # noqa: BLE001
         db.finish_run(conn, run_id, "failed", len(ingested), 0, str(exc))
