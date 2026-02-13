@@ -397,20 +397,12 @@ def _finalize_items(
     ingested: list[dict[str, Any]],
     rules: dict[str, Any],
     options: RunOptions,
-    check_timeout,
 ) -> dict[str, Any]:
     filtered = _apply_filters(ingested, options)
     unique = dedup.deduplicate(filtered)
 
     persisted = 0
-    timed_out = False
     for item in unique:
-        try:
-            check_timeout()
-        except TimeoutError:
-            timed_out = True
-            break
-
         item["fingerprint"] = dedup.fingerprint_item(item)
         item["mode_name"] = options.mode_name
         item["full_text_source"] = None
@@ -435,14 +427,14 @@ def _finalize_items(
         db.upsert_item(conn, item)
         persisted += 1
 
-    status = "timeout" if timed_out else "success"
+    status = "success"
     db.finish_run(conn, run_id, status, len(ingested), persisted)
     return {
         "run_id": run_id,
         "status": status,
         "ingested_count": len(ingested),
         "deduped_count": persisted,
-        "timed_out": timed_out,
+        "timed_out": False,
     }
 
 
@@ -475,7 +467,7 @@ def run_pipeline(conn, specialty: str, subcategory: str, options: RunOptions) ->
             effective_options,
             _check_timeout,
         )
-        return _finalize_items(conn, run_id, ingested, rules, effective_options, _check_timeout)
+        return _finalize_items(conn, run_id, ingested, rules, effective_options)
     except TimeoutError as exc:
         db.finish_run(conn, run_id, "timeout", len(ingested), 0, str(exc))
         return {
@@ -545,7 +537,7 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
         )
         query_context = rules.get("search_query_context") or {}
         ingested = [i for i in ingested_raw if _is_search_relevant(i, query_context)]
-        return _finalize_items(conn, run_id, ingested, rules, effective_options, _check_timeout)
+        return _finalize_items(conn, run_id, ingested, rules, effective_options)
     except TimeoutError as exc:
         db.finish_run(conn, run_id, "timeout", len(ingested), 0, str(exc))
         return {

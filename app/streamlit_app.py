@@ -36,6 +36,8 @@ if "new_custom_name" not in st.session_state:
     st.session_state["new_custom_name"] = ""
 if "clear_notice" not in st.session_state:
     st.session_state["clear_notice"] = ""
+if "run_feedback" not in st.session_state:
+    st.session_state["run_feedback"] = None
 
 header_l, header_r = st.columns([5, 1])
 with header_l:
@@ -871,6 +873,14 @@ if st.session_state.get("clear_notice"):
     st.success(st.session_state["clear_notice"])
     st.session_state["clear_notice"] = ""
 
+if st.session_state.get("run_feedback"):
+    kind, msg = st.session_state["run_feedback"]
+    if kind == "warning":
+        st.warning(msg)
+    else:
+        st.success(msg)
+    st.session_state["run_feedback"] = None
+
 actions_slot = st.empty()
 with actions_slot.container():
     run_row_l, run_row_m, _ = st.columns([1.0, 1.0, 8.0], gap="medium")
@@ -985,13 +995,18 @@ if run_clicked:
 
     st.session_state["has_run_once"] = True
     if overall_timed_out or timed_out_runs:
-        st.warning(
+        st.session_state["run_feedback"] = (
+            "warning",
             f"Run completed with timeout safeguards. Packs run: {run_count} | "
             f"Ingested: {total_ingested} | Deduped: {total_deduped} | "
-            f"Timed-out packs: {timed_out_runs}"
+            f"Timed-out packs: {timed_out_runs}",
         )
     else:
-        st.success(f"Run complete. Packs run: {run_count} | Ingested: {total_ingested} | Deduped: {total_deduped}")
+        st.session_state["run_feedback"] = (
+            "success",
+            f"Run complete. Packs run: {run_count} | Ingested: {total_ingested} | Deduped: {total_deduped}",
+        )
+    st.rerun()
 
 if not any_source_selected:
     st.info("Current mode disabled all data sources. Choose a different mode to run.")
