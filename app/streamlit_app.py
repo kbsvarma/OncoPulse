@@ -57,7 +57,7 @@ with header_r:
             value=False,
             help="Optional readability rewrite with strict evidence/numeric guardrails.",
         )
-        fast_mode = st.toggle("Fast mode", value=True)
+        fast_mode = st.toggle("Fast mode", value=False)
         enrich_citations = st.toggle("Enrich citations", value=False)
         enable_semantic_scholar = st.toggle(
             "Semantic Scholar fallback (PMID)",
@@ -883,23 +883,6 @@ if st.session_state.get("run_feedback"):
         st.success(msg)
     st.session_state["run_feedback"] = None
 
-if search_mode and st.session_state.get("search_diagnostics"):
-    diag = st.session_state.get("search_diagnostics") or {}
-    with st.expander("Search diagnostics", expanded=False):
-        st.caption("Effective queries used")
-        st.code(f"Paper query: {diag.get('paper_query') or '-'}\nTrial query: {diag.get('trial_query') or '-'}", language="text")
-        st.caption(
-            f"Hits before relevance filter: {diag.get('raw_hits_total', 0)} | "
-            f"after filter: {diag.get('relevant_hits_total', 0)}"
-        )
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Raw hits by source**")
-            st.json(diag.get("raw_hits_by_source") or {})
-        with c2:
-            st.markdown("**Relevant hits by source**")
-            st.json(diag.get("relevant_hits_by_source") or {})
-
 actions_slot = st.empty()
 with actions_slot.container():
     run_row_l, run_row_m, _ = st.columns([1.0, 1.0, 8.0], gap="medium")
@@ -1220,6 +1203,27 @@ elif active_view == "Saved":
 
 elif active_view == "Research Tools":
     if st.session_state.get("has_run_once", False):
+        if search_mode and st.session_state.get("search_diagnostics"):
+            diag = st.session_state.get("search_diagnostics") or {}
+            with st.expander("Search diagnostics", expanded=False):
+                st.caption("Effective queries used")
+                st.code(
+                    f"Paper query: {diag.get('paper_query') or '-'}\n"
+                    f"Trial query: {diag.get('trial_query') or '-'}",
+                    language="text",
+                )
+                st.caption(
+                    f"Hits before relevance filter: {diag.get('raw_hits_total', 0)} | "
+                    f"after filter: {diag.get('relevant_hits_total', 0)}"
+                )
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**Raw hits by source**")
+                    st.json(diag.get("raw_hits_by_source") or {})
+                with c2:
+                    st.markdown("**Relevant hits by source**")
+                    st.json(diag.get("relevant_hits_by_source") or {})
+
         table_scope = st.selectbox(
             "Table scope",
             ["All results", "Papers only", "Trials only"],

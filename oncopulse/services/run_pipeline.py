@@ -519,6 +519,8 @@ def run_pipeline_query(conn, query: str, options: RunOptions) -> dict[str, Any]:
         resolved_days_back=resolved_days,
         force_full_refresh=effective_options.force_full_refresh,
     )
+    scope_started_at_row = conn.execute("SELECT started_at FROM run_history WHERE id = ?", (run_id,)).fetchone()
+    scope_started_at = str(scope_started_at_row["started_at"]) if scope_started_at_row else datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
 
     def _check_timeout() -> None:
